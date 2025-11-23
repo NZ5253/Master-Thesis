@@ -1,0 +1,53 @@
+# mpc/config_mpc.yaml
+# Common configuration for TEB-style MPC.
+
+vehicle:
+  length: 0.36        # [m] CRC footprint (approx)
+  width: 0.26         # [m]
+  wheelbase: 0.21     # [m]
+  max_steer: 0.6      # [rad]
+  max_steer_rate: 0.5 # [rad/s]
+  max_vel: 1.0        # [m/s]
+  max_acc: 1.0        # [m/s^2]
+
+environment:
+  size_x: 4.0         # [m]
+  size_y: 4.0         # [m]
+  safety_margin: 0.05 # [m] obstacle inflation margin
+
+mpc:
+  # match ParkingEnv dt
+  dt: 0.1                 # [s]
+  horizon_steps: 25       # 25 * 0.1 = 2.5 s horizon
+  max_iter: 30
+
+  # strong goal attraction
+  w_goal_xy: 80.0
+  w_goal_theta: 50.0
+  w_goal_v: 1.5           # penalise non-zero speed near goal
+
+  # lighter smoothing so it can manoeuvre
+  w_steer: 1.0
+  w_accel: 0.1
+  w_smooth_steer: 0.05
+  w_smooth_accel: 0.02
+
+  # obstacle cost (soft so goal still wins)
+  w_collision: 8.0
+  alpha_obs: 3.0          # kept for future if you add exp potentials
+
+  # world boundary penalty (stay inside 4x4 box)
+  w_boundary: 30.0
+  boundary_margin: 0.2    # keep ~20 cm away from walls
+
+  # profile-specific weights (we currently use perpendicular only,
+  # but keep parallel for future)
+  profiles:
+    parallel:
+      w_goal_xy: 50.0
+      w_goal_theta: 80.0
+      w_reverse_penalty: 0.5
+    perpendicular:
+      w_goal_xy: 80.0
+      w_goal_theta: 50.0
+      w_reverse_penalty: 0.1

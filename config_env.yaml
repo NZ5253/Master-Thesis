@@ -1,0 +1,36 @@
+# Perpendicular parking env config
+
+dt: 0.05
+max_steps: 200
+
+vehicle:
+  length: 0.36
+  width: 0.26
+  wheelbase: 0.21
+  max_steer: 0.6
+  max_accel: 1.0
+  max_speed: 1.0
+
+# Goal pose of the parking bay (perpendicular)
+# x, y in meters; yaw in radians (~pi/2 = pointing "up")
+goal: [1.6, 1.0, 1.57]
+
+obstacles:
+  # Outer world rectangle (used to build 4 walls)
+  world:
+    x_min: -2.0
+    x_max:  2.0
+    y_min: -2.0
+    y_max:  2.0
+    thickness: 0.05
+
+  # Neighbour cars, automatically placed LEFT and RIGHT of the goal
+  neighbor:
+    w: 0.26      # neighbour car width in x
+    h: 0.50      # neighbour car length in y
+    offset: 0.40 # centre-to-centre distance from goal to each neighbour
+
+  # Random jitter used by ObstacleManager.randomize()
+  variability:
+    pos: 0.05    # positional jitter (meters)
+    size: 0.05   # size jitter (fractional)

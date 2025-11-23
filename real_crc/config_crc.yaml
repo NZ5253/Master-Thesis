@@ -1,0 +1,5 @@
+mocap:
+  endpoint: null
+  rate: 100
+crc:
+  interface: sim
