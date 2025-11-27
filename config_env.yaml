@@ -1,36 +1,61 @@
-# Perpendicular parking env config
-
-dt: 0.05
-max_steps: 200
-
+# config_env.yaml
 vehicle:
   length: 0.36
   width: 0.26
-  wheelbase: 0.21
-  max_steer: 0.6
-  max_accel: 1.0
-  max_speed: 1.0
+  wheelbase: 0.25
+  max_steer: 0.523    # ~30 deg
+  max_steer_rate: 0.5
+  max_vel: 1.0
+  max_acc: 1.0
 
-# Goal pose of the parking bay (perpendicular)
-# x, y in meters; yaw in radians (~pi/2 = pointing "up")
-goal: [1.6, 1.0, 1.57]
+dt: 0.1
+max_steps: 200
 
+# World size (matches MPC)
+world:
+  width: 4.0
+  height: 4.0
+
+# Default goal (overwritten by reset)
+goal: [0.0, 0.0, 0.0]
+
+parking:
+  mode: perpendicular
+  bay:
+    center_y: 0.0
+    x_min: -1.2
+    x_max: 1.2
+    width: 0.30
+    depth: 0.55
+    yaw: 1.5708  # 90 degrees (facing up)
+
+spawn_lane:
+  y_min: -1.6
+  y_max: -1.3
+  x_half_width: 0.8
+
+# --- THE CRITICAL SECTION ---
 obstacles:
-  # Outer world rectangle (used to build 4 walls)
+  # 1. The Box Walls (The Room)
   world:
     x_min: -2.0
-    x_max:  2.0
+    x_max: 2.0
     y_min: -2.0
-    y_max:  2.0
-    thickness: 0.05
+    y_max: 2.0
+    thickness: 0.10
 
-  # Neighbour cars, automatically placed LEFT and RIGHT of the goal
+  # 2. The Neighbor Cars (The Parking Pocket)
   neighbor:
-    w: 0.26      # neighbour car width in x
-    h: 0.50      # neighbour car length in y
-    offset: 0.40 # centre-to-centre distance from goal to each neighbour
+    w: 0.26
+    h: 0.36
+    offset: 0.40      # Distance from center of bay to center of neighbor
+    pos_jitter: 0.05  # Slight misalignment of neighbors
 
-  # Random jitter used by ObstacleManager.randomize()
-  variability:
-    pos: 0.05    # positional jitter (meters)
-    size: 0.05   # size jitter (fractional)
+  # 3. Random obstacles (Trash cans, cones)
+  random:
+    num_min: 1
+    num_max: 2
+    x_range: [-1.5, 1.5]
+    y_range: [-1.5, 1.5]
+    w_range: [0.1, 0.2]
+    h_range: [0.1, 0.2]

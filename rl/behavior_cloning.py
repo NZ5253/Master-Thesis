@@ -13,33 +13,28 @@ from rl.networks import MLP
 
 
 def load_expert_trajectories(folder):
-    """Load all (state, action) pairs from expert .pkl trajectories."""
-    files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.pkl')]
+    files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".pkl")]
     data = []
     for f in sorted(files):
         with open(f, "rb") as fh:
-            traj = pickle.load(fh)  # list of (state, action)
+            traj = pickle.load(fh)  # list of (obs, action)
             data.extend(traj)
     return data
 
 
 def build_dataset(expert_folder):
-    """Return arrays X (states) and Y (actions) from expert folder."""
     data = load_expert_trajectories(expert_folder)
     if len(data) == 0:
         raise RuntimeError(f"No expert data found in {expert_folder}")
 
-    states = []
-    actions = []
-    for s, a in data:
-        s = np.asarray(s, dtype=np.float32)
-        a = np.asarray(a, dtype=np.float32)
-        # here we assume s is [x,y,yaw,v] and a is [steer, accel]
-        states.append(s)
-        actions.append(a)
+    obs_list = []
+    act_list = []
+    for obs, act in data:
+        obs_list.append(np.asarray(obs, dtype=np.float32))
+        act_list.append(np.asarray(act, dtype=np.float32))
 
-    X = np.stack(states, axis=0)
-    Y = np.stack(actions, axis=0)
+    X = np.stack(obs_list, axis=0)
+    Y = np.stack(act_list, axis=0)
     return X, Y
 
 
@@ -52,26 +47,22 @@ def train_bc(
     lr: float = 1e-3,
     device: str = None,
 ):
-    # device selection
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # build dataset
     X, Y = build_dataset(expert_folder)
     print(f"[BC] Loaded {X.shape[0]} expert samples from {expert_folder}")
 
-    X_t = torch.from_numpy(X).to(device)  # [N, state_dim]
-    Y_t = torch.from_numpy(Y).to(device)  # [N, act_dim]
+    X_t = torch.from_numpy(X).to(device)
+    Y_t = torch.from_numpy(Y).to(device)
 
     state_dim = X.shape[1]
     act_dim = Y.shape[1]
 
-    # build policy network
     policy = MLP(input_dim=state_dim, output_dim=act_dim, hidden=hidden).to(device)
     optimizer = optim.Adam(policy.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
-    # simple manual minibatch loop
     N = X_t.shape[0]
     indices = np.arange(N)
 
@@ -98,44 +89,28 @@ def train_bc(
 
         epoch_loss /= max(n_batches, 1)
         if (ep + 1) % 5 == 0 or ep == epochs - 1:
-            print(f"[BC] Epoch {ep + 1}/{epochs}, loss={epoch_loss:.6f}")
+            print(f"[BC] Epoch {ep+1}/{epochs}, loss={epoch_loss:.6f}")
 
-    # save trained policy
     os.makedirs(os.path.dirname(policy_save_path), exist_ok=True)
-    torch.save({"state_dict": policy.state_dict(),
-                "state_dim": state_dim,
-                "act_dim": act_dim,
-                "hidden": list(hidden)},
-               policy_save_path)
+    torch.save(
+        {
+            "state_dict": policy.state_dict(),
+            "input_dim": state_dim,
+            "act_dim": act_dim,
+            "hidden": list(hidden),
+        },
+        policy_save_path,
+    )
     print(f"[BC] Saved policy to {policy_save_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Behavior Cloning training script.")
-    parser.add_argument(
-        "--expert-dir",
-        type=str,
-        default="data/expert_success",
-        help="Directory with filtered successful expert episodes (.pkl).",
-    )
-    parser.add_argument(
-        "--out",
-        type=str,
-        default="data/bc_policies/bc_policy.pt",
-        help="Path to save the trained BC policy.",
-    )
-    parser.add_argument(
-        "--epochs", type=int, default=50,
-        help="Number of training epochs."
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=256,
-        help="Mini-batch size."
-    )
-    parser.add_argument(
-        "--lr", type=float, default=1e-3,
-        help="Learning rate."
-    )
+    parser = argparse.ArgumentParser(description="Behavior Cloning training.")
+    parser.add_argument("--expert-dir", type=str, default="data/expert_success")
+    parser.add_argument("--out", type=str, default="data/bc_policies/bc_policy.pt")
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
 
     train_bc(
@@ -149,4 +124,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

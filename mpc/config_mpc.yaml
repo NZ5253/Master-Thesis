@@ -4,8 +4,8 @@
 vehicle:
   length: 0.36        # [m] CRC footprint (approx)
   width: 0.26         # [m]
-  wheelbase: 0.21     # [m]
-  max_steer: 0.6      # [rad]
+  wheelbase: 0.25     # [m]
+  max_steer: 0.523      # [rad]
   max_steer_rate: 0.5 # [rad/s]
   max_vel: 1.0        # [m/s]
   max_acc: 1.0        # [m/s^2]
@@ -33,7 +33,7 @@ mpc:
   w_smooth_accel: 0.02
 
   # obstacle cost (soft so goal still wins)
-  w_collision: 8.0
+  w_collision: 15.0
   alpha_obs: 3.0          # kept for future if you add exp potentials
 
   # world boundary penalty (stay inside 4x4 box)

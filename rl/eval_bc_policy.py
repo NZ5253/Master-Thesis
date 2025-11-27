@@ -11,18 +11,17 @@ from rl.networks import MLP
 
 def load_policy(path: str, device: str):
     ckpt = torch.load(path, map_location=device)
-    state_dim = ckpt["state_dim"]
+    input_dim = ckpt["input_dim"]
     act_dim = ckpt["act_dim"]
     hidden = tuple(ckpt.get("hidden", [128, 128]))
 
-    policy = MLP(input_dim=state_dim, output_dim=act_dim, hidden=hidden).to(device)
+    policy = MLP(input_dim=input_dim, output_dim=act_dim, hidden=hidden).to(device)
     policy.load_state_dict(ckpt["state_dict"])
     policy.eval()
-    return policy, state_dim, act_dim
+    return policy, input_dim, act_dim
 
 
 def run_episode(env: ParkingEnv, policy: MLP, device: str, max_steps: int = None):
-    """Run one episode using the BC policy. Returns (success, steps, termination)."""
     obs = env.reset(randomize=True)
     done = False
     steps = 0
@@ -32,13 +31,11 @@ def run_episode(env: ParkingEnv, policy: MLP, device: str, max_steps: int = None
         max_steps = env.max_steps
 
     while not done and steps < max_steps:
-        # We trained on raw state [x, y, yaw, v], not full obs.
-        s = env.state.astype(np.float32)  # shape (4,)
-
+        o_np = np.asarray(obs, dtype=np.float32)
         with torch.no_grad():
-            s_t = torch.from_numpy(s).unsqueeze(0).to(device)  # [1, state_dim]
-            a_t = policy(s_t)                                  # [1, act_dim]
-        action = a_t.cpu().numpy().squeeze()                   # [2,] -> [steer, accel]
+            o_t = torch.from_numpy(o_np).unsqueeze(0).to(device)
+            a_t = policy(o_t)
+        action = a_t.cpu().numpy().squeeze()
 
         obs, reward, done, info = env.step(action)
         steps += 1
@@ -52,38 +49,21 @@ def run_episode(env: ParkingEnv, policy: MLP, device: str, max_steps: int = None
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate a behavior-cloned policy in the parking env.")
-    parser.add_argument(
-        "--policy",
-        type=str,
-        default="data/bc_policies/bc_policy.pt",
-        help="Path to the trained BC policy (.pt).",
-    )
-    parser.add_argument(
-        "--episodes",
-        type=int,
-        default=50,
-        help="Number of evaluation episodes.",
-    )
-    parser.add_argument(
-        "--cfg-env",
-        type=str,
-        default="config_env.yaml",
-        help="Path to env config.",
-    )
+    parser = argparse.ArgumentParser(description="Evaluate BC policy in random parking env.")
+    parser.add_argument("--policy", type=str, default="data/bc_policies/bc_policy.pt")
+    parser.add_argument("--episodes", type=int, default=50)
+    parser.add_argument("--cfg-env", type=str, default="config_env.yaml")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[EVAL] Using device: {device}")
 
-    # load env
-    with open(args.cfg_env, "r") as f:
+    with open(args.cfg-env, "r") as f:
         cfg_env = yaml.safe_load(f)
     env = ParkingEnv(cfg_env)
 
-    # load policy
-    policy, state_dim, act_dim = load_policy(args.policy, device)
-    print(f"[EVAL] Loaded BC policy with state_dim={state_dim}, act_dim={act_dim}")
+    policy, input_dim, act_dim = load_policy(args.policy, device)
+    print(f"[EVAL] Loaded BC policy with input_dim={input_dim}, act_dim={act_dim}")
 
     n_success = 0
     term_counts = {}
