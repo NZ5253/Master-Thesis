@@ -74,37 +74,54 @@ class ParkingEnv:
 
     def _sample_bay_and_obstacles(self):
         """Sample bay position (goal) and regenerate obstacle layout."""
-
         bay_cfg = self.parking_cfg.get("bay", {})
 
-        # Bay centre range along X (inside world bounds by some margin)
-        cx_min = float(bay_cfg.get("x_min", self.x_min + 0.5))
-        cx_max = float(bay_cfg.get("x_max", self.x_max - 0.5))
-        cy = float(bay_cfg.get("center_y", 0.0))
+        cx = 0.0
+        center_y = float(bay_cfg.get("center_y", 0.0))
         yaw = float(bay_cfg.get("yaw", 0.0))
 
-        # sample bay center along X
-        cx = np.random.uniform(cx_min, cx_max)
+        # ---- 1) Ego goal (rear axle) ----
+        # draw_car uses dist_to_center = 0.13 for the geometric center
+        # We let config override how far the rear axle is from the bay center.
+        default_offset = -0.13  # current behavior: goal is 0.13 below center
+        goal_offset_y = float(bay_cfg.get("goal_offset_y", default_offset))
 
-        # update goal: center of the slot
-        self.goal = np.array([cx, cy, yaw], dtype=float)
+        goal_y = center_y + goal_offset_y
 
-        # notify obstacle manager & randomise layout
-        self.obstacles.set_goal(self.goal)
+        # Rear-axle goal used by MPC / success check
+        self.goal = np.array([cx, goal_y, yaw], dtype=float)
+
+        # ---- 2) Obstacles use BAY CENTER (so neighbours don't move) ----
+        bay_pose_for_obstacles = np.array([cx, center_y, yaw], dtype=float)
+        self.obstacles.set_goal(bay_pose_for_obstacles)
         self.obstacles.randomize()
 
     def _random_start(self):
-        """Spawn the ego car in a lane below the bay, relative to the current goal."""
+        """Spawn the ego car relative to the current goal."""
         gx, gy, gyaw = self.goal
 
+        # Standard lane Y offsets
         lane_y_min = float(self.spawn_cfg.get("y_min", gy - 1.6))
         lane_y_max = float(self.spawn_cfg.get("y_max", gy - 1.3))
-        half_w = float(self.spawn_cfg.get("x_half_width", 0.8))
+
+        # Heading configuration
+        spawn_yaw = float(self.spawn_cfg.get("yaw", gyaw))
+
+        # --- FIX: Asymmetric X Spawning (Force start ahead) ---
+        # If x_min_offset is present, use [gx + min, gx + max]
+        # Otherwise fallback to symmetric x_half_width
+        if "x_min_offset" in self.spawn_cfg:
+            x_min = gx + float(self.spawn_cfg["x_min_offset"])
+            x_max = gx + float(self.spawn_cfg.get("x_max_offset", 2.0))
+        else:
+            half_w = float(self.spawn_cfg.get("x_half_width", 0.8))
+            x_min = gx - half_w
+            x_max = gx + half_w
 
         for _ in range(50):
-            x = np.random.uniform(gx - half_w, gx + half_w)
+            x = np.random.uniform(x_min, x_max)
             y = np.random.uniform(lane_y_min, lane_y_max)
-            yaw = gyaw  # facing roughly towards the bays
+            yaw = spawn_yaw
             v = 0.0
             candidate = np.array([x, y, yaw, v], dtype=float)
 
@@ -114,11 +131,8 @@ class ParkingEnv:
                 continue
             return candidate
 
-        # fallback: lane center below bay
-        x = gx
-        y = 0.5 * (lane_y_min + lane_y_max)
-        return np.array([x, y, gyaw, 0.0], dtype=float)
-
+        # Fallback if random placement fails
+        return np.array([x_max, 0.5 * (lane_y_min + lane_y_max), spawn_yaw, 0.0], dtype=float)
     # ------------------------------------------------------------------
     # Core env API
     # ------------------------------------------------------------------
