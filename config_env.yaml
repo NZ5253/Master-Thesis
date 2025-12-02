@@ -15,39 +15,43 @@ world:
   width: 4.0
   height: 4.0
 
-# --- SCENARIO DEFINITIONS ---
 scenarios:
   # 1. PERPENDICULAR
   perpendicular:
     parking:
       bay:
-        center_y: 0.0     # bay center along y
-        yaw: 1.5708       # 90 deg
+        center_y: 0.0          # bay row is at y = 0
+        yaw: 1.5708            # 90° (upright car in the bay)
     spawn_lane:
+      # Car starts below the bays, driving along +x (from left side)
       y_min: -1.6
       y_max: -1.3
-      x_half_width: 0.8
-      yaw: 0.0
+      yaw: 0.0                 # car heading along +x
+      x_min_offset: -1.3       # start on the LEFT of goal
+      x_max_offset: -0.9       # closer to centre but still left
     obstacles:
       world: {x_min: -2.0, x_max: 2.0, y_min: -2.0, y_max: 2.0}
-      neighbor: {w: 0.26, h: 0.36, offset: 0.40, pos_jitter: 0.05}
-      random: {num_min: 0, num_max: 0}  # set to 0 for now (not used yet)
+      neighbor:
+        w: 0.26                # car width (across bay)
+        h: 0.36                # car length (into bay)
+        offset: 0.40           # left/right distance from bay center
+        pos_jitter: 0.0        # NO randomness for now
+      random: {num_min: 0, num_max: 0}  # disable random obstacles
 
-  # 2. PARALLEL
+  # 2. PARALLEL (keep whatever you already have working)
   parallel:
     parking:
       bay:
         center_y: 0.0
-        goal_offset_y: -0.10  # rear axle offset from bay center (change to -0.13 if you prefer)
+        goal_offset_y: -0.10
         yaw: 0.0
     spawn_lane:
       y_min: 0.9
       y_max: 1.0
       yaw: 0.0
-      # FORCE START AHEAD OF GOAL
-      x_min_offset: 0.9      # more room to maneuver
-      x_max_offset: 1.3      # keep < 2.0 to stay inside walls
+      x_min_offset: 0.9
+      x_max_offset: 1.3
     obstacles:
       world: {x_min: -2.0, x_max: 2.0, y_min: -2.0, y_max: 2.0}
-      neighbor: {w: 0.36, h: 0.26, offset: 0.64, pos_jitter: 0.0}  # match parallel layout
+      neighbor: {w: 0.36, h: 0.26, offset: 0.64, pos_jitter: 0.0}
       random: {num_min: 0, num_max: 0}

@@ -51,6 +51,7 @@ class TEBMPC:
         config_path: Optional[str] = None,
         max_obstacles: int = 25,
         env_cfg: Optional[Dict[str, Any]] = None,
+        dt: Optional[float] = None,
     ) -> None:
         """
         If env_cfg is provided, dt + vehicle + world come from config_env.yaml.
@@ -71,8 +72,10 @@ class TEBMPC:
             # Take vehicle + world + dt from config_env.yaml
             self.env_cfg = env_cfg
             self.vehicle_cfg = env_cfg["vehicle"]
-
-            self.dt = float(env_cfg["dt"])
+            if dt is not None:
+                self.dt = float(dt)
+            else:
+                self.dt = float(self.mpc_cfg.get("dt", 0.1))  # legacy fallback
             world_cfg = env_cfg.get("world", {})
             self.world_w = float(world_cfg.get("width", 4.0))
             self.world_h = float(world_cfg.get("height", 4.0))
