@@ -263,7 +263,7 @@ class TEBMPC:
             if max(o.hx, o.hy) > 1.0:  # world wall
                 r = 0.30
             else:  # parked cars etc.
-                r = 0.07  # <- key: lets you get deeper into the gap
+                r = 0.10  # <- key: lets you get deeper into the gap
             P[idx + 2] = r
 
         lbx = [-np.inf] * 4 * (self.N + 1) + [-0.52, -1.0] * self.N

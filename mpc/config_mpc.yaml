@@ -40,7 +40,6 @@ mpc:
   w_boundary: 30.0
   boundary_margin: 0.2
 
-  # profile-specific weights
   profiles:
     parallel:
       w_goal_xy: 350.0        # Lower priority on exact center

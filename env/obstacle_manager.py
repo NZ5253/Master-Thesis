@@ -123,16 +123,25 @@ class ObstacleManager:
         return dists[0], dists[1], dists[2]
 
     def get_car_corners(self, state, vehicle_params):
-        # ... (Keep exactly as was) ...
-        x, y, yaw, _ = state
+        x_rear, y_rear, yaw, _ = state
         L = vehicle_params.get('length', 0.36)
         W = vehicle_params.get('width', 0.26)
+
+        # Use SAME center as draw_car / MPC
+        dist_to_center = L / 2.0 - 0.05  # must match draw_car
+        cx = x_rear + dist_to_center * np.cos(yaw)
+        cy = y_rear + dist_to_center * np.sin(yaw)
+
+        # Corners relative to geometric center
         corners_local = np.array([
-            [L / 2, W / 2], [L / 2, -W / 2], [-L / 2, -W / 2], [-L / 2, W / 2]
+            [L / 2, W / 2],
+            [L / 2, -W / 2],
+            [-L / 2, -W / 2],
+            [-L / 2, W / 2],
         ])
         c, s = np.cos(yaw), np.sin(yaw)
         rot = np.array([[c, -s], [s, c]])
-        return (rot @ corners_local.T).T + np.array([x, y])
+        return (rot @ corners_local.T).T + np.array([cx, cy])
 
     def check_collision(self, state, vehicle_model) -> bool:
         # ... (Keep exactly as was) ...

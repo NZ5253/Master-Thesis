@@ -49,7 +49,7 @@ scenarios:
       neighbor:
         w: 0.36
         h: 0.26
-        offset: 0.54      # FIXED: Gap = 0.64m (Fits car)
+        offset: 0.64      # FIXED: Gap = 0.64m (Fits car)
         pos_jitter: 0.0
     spawn_lane:
           y_min: 0.9
@@ -61,5 +61,5 @@ scenarios:
 
     obstacles:
       world: {x_min: -2.0, x_max: 2.0, y_min: -2.0, y_max: 2.0}
-      neighbor: {w: 0.36, h: 0.26, offset: 0.54, pos_jitter: 0.0} # Match parking
+      neighbor: {w: 0.36, h: 0.26, offset: 0.64, pos_jitter: 0.0} # Match parking
       random: {num_min: 0, num_max: 0}

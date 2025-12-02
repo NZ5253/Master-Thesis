@@ -93,6 +93,11 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
         done = False
         step = 0
 
+        # Debug trackers
+        best_pos_err = float("inf")
+        best_yaw_err = float("inf")
+        best_step = 0
+
         while not done:
             state = VehicleState(x=env.state[0], y=env.state[1], yaw=env.state[2], v=env.state[3])
             goal = ParkingGoal(x=env.goal[0], y=env.goal[1], yaw=env.goal[2])
@@ -108,7 +113,31 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
             obs, reward, done, info = env.step(action)
             step += 1
 
+            # --- DEBUG: track best distance / heading so far ---
+            pos_err = info.get("pos_err", None)
+            yaw_err = info.get("yaw_err", None)
+            if pos_err is not None:
+                if pos_err < best_pos_err:
+                    best_pos_err = float(pos_err)
+                    best_yaw_err = float(abs(yaw_err)) if yaw_err is not None else best_yaw_err
+                    best_step = step
+
         term = info.get("termination", "unknown")
+        # --- FINAL pose errors (using env state & goal) ---
+        x, y, yaw, v = env.state
+        gx, gy, gyaw = env.goal
+
+        final_pos_err = float(np.hypot(gx - x, gy - y))
+        final_yaw_err = float(abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi))
+
+        # Detailed debug line for this attempt
+        print(
+            f"[DETAIL] Attempt {attempt_count}: term={term}, steps={step}, "
+            f"final_pos_err={final_pos_err:.3f}, final_yaw_err={final_yaw_err:.3f}, "
+            f"best_pos_err={best_pos_err:.3f} at step {best_step}, "
+            f"best_yaw_err={best_yaw_err:.3f}"
+        )
+
 
         save_data = {
             "traj": traj,

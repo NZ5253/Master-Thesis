@@ -37,7 +37,7 @@ def draw_ego_circles(ax, state, vehicle_cfg):
     x, y, yaw = state[0], state[1], state[2]
     L = float(vehicle_cfg.get("length", 0.36))
     W = float(vehicle_cfg.get("width", 0.26))
-    radius = W / 2.2
+    radius = W / 4
 
     # Match the logic in teb_mpc.py
     dist_ra_to_center = L / 2.0 - 0.05
