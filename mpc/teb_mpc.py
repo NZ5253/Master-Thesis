@@ -46,23 +46,50 @@ class MPCSolution:
 
 
 class TEBMPC:
-    def __init__(self, config_path: Optional[str] = None, max_obstacles: int = 25) -> None:
+    def __init__(
+        self,
+        config_path: Optional[str] = None,
+        max_obstacles: int = 25,
+        env_cfg: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        If env_cfg is provided, dt + vehicle + world come from config_env.yaml.
+        config_mpc.yaml then only defines MPC hyperparameters (horizon, weights, profiles).
+        """
         if config_path is None:
-            base_dir = os.path.dirname(os.path.dirname(__file__))
-            config_path = os.path.join(base_dir, "mpc", "config_mpc.yaml")
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(base_dir, "config_mpc.yaml")
 
         with open(config_path, "r") as f:
             cfg = yaml.safe_load(f)
 
-        self.vehicle_cfg = cfg.get("vehicle", {})
+        # MPC hyperparameters (weights, horizon, profiles)
         self.mpc_cfg = cfg.get("mpc", cfg)
-        self.env_cfg = cfg.get("environment", {})
 
-        self.dt = float(self.mpc_cfg.get("dt", 0.1))
+        # -------- Single source of truth for physics: env_cfg --------
+        if env_cfg is not None:
+            # Take vehicle + world + dt from config_env.yaml
+            self.env_cfg = env_cfg
+            self.vehicle_cfg = env_cfg["vehicle"]
+
+            self.dt = float(env_cfg["dt"])
+            world_cfg = env_cfg.get("world", {})
+            self.world_w = float(world_cfg.get("width", 4.0))
+            self.world_h = float(world_cfg.get("height", 4.0))
+        else:
+            # Backward-compatible fallback if someone uses TEBMPC standalone
+            self.env_cfg = cfg.get("environment", {})
+            self.vehicle_cfg = cfg.get("vehicle", {})
+
+            # dt, world size from MPC config or environment subsection
+            self.dt = float(self.mpc_cfg.get("dt", 0.1))
+            self.world_w = float(self.env_cfg.get("size_x", 4.0))
+            self.world_h = float(self.env_cfg.get("size_y", 4.0))
+
         self.N = int(self.mpc_cfg.get("horizon_steps", 50))
         self.max_obstacles = max_obstacles
 
-        # --- LOAD DEFAULT WEIGHTS ---
+        # --- Load default weights (pure MPC stuff, no duplication) ---
         print("\n[MPC] Loading Default Weights:")
         self.w_goal_xy = float(self.mpc_cfg.get("w_goal_xy", 80.0))
         self.w_goal_theta = float(self.mpc_cfg.get("w_goal_theta", 50.0))
@@ -78,37 +105,34 @@ class TEBMPC:
         print(f"  -> Collision: {self.w_collision}")
         print(f"  -> Reverse Penalty: {self.w_reverse_penalty}")
 
-        # World bounds
-        self.world_w = float(self.env_cfg.get("size_x", 4.0))
-        self.world_h = float(self.env_cfg.get("size_y", 4.0))
-        self.x_min, self.x_max = -self.world_w / 2, self.world_w / 2
-        self.y_min, self.y_max = -self.world_h / 2, self.world_h / 2
-        self.boundary_margin = 0.2
+        # World bounds (4x4 box from env)
+        self.x_min, self.x_max = -self.world_w / 2.0, self.world_w / 2.0
+        self.y_min, self.y_max = -self.world_h / 2.0, self.world_h / 2.0
+        self.boundary_margin = float(self.mpc_cfg.get("boundary_margin", 0.2))
 
-        # Geometry
-        self.length = float(self.vehicle_cfg.get("length", 0.36))
-        self.width = float(self.vehicle_cfg.get("width", 0.26))
+        # -------- Vehicle geometry (from env.vehicle only) --------
+        self.length = float(self.vehicle_cfg["length"])
+        self.width = float(self.vehicle_cfg["width"])
+        # Circle model radius (tuning, not config duplication)
         self.circle_radius = self.width / 4.0
 
-        # --- UPDATED: 4-CIRCLE MODEL ---
-        # Calculate 4 offsets relative to the rear axle
-        # dist_ra_to_center aligns the geometric center relative to the rear axle
+        # 4-circle footprint along vehicle spine
         dist_ra_to_center = self.length / 2.0 - 0.05
         step = self.length / 8.0
-
-        # 4 circles distributed evenly along the spine
-        self.offsets = [
-            dist_ra_to_center + 3 * step,  # Front
+        self.circle_offsets = [
+            dist_ra_to_center + 3 * step,  # front
             dist_ra_to_center + 1 * step,
             dist_ra_to_center - 1 * step,
-            dist_ra_to_center - 3 * step  # Rear
+            dist_ra_to_center - 3 * step,  # rear
         ]
 
         self.solver = None
         self._last_X, self._last_U = None, None
         self._current_profile = None
 
-        if ca is not None: self._build_solver()
+        if ca is not None:
+            self._build_solver()
+
 
     def _apply_profile(self, profile: str):
         if self._current_profile == profile:
@@ -191,7 +215,7 @@ class TEBMPC:
             s_theta = ca.sin(st[2])
 
             # Loop over all 4 ego circles
-            for offset in self.offsets:
+            for offset in self.circle_offsets:
                 # Calculate circle center
                 cx = st[0] + offset * c_theta
                 cy = st[1] + offset * s_theta

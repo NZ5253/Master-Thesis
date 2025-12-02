@@ -67,7 +67,6 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
     else:
         final_out_dir = out_dir
 
-    # Create main dir and DEBUG dir
     debug_dir = final_out_dir + "_debug"
     os.makedirs(final_out_dir, exist_ok=True)
     os.makedirs(debug_dir, exist_ok=True)
@@ -75,9 +74,9 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
     print(f"[INFO] Output Directory: {final_out_dir}")
     print(f"[INFO] Debug Directory:  {debug_dir} (Failures saved here)\n")
 
+    # --- IMPORTANT: env + MPC share the SAME env cfg now ---
     env = ParkingEnv(cfg_env)
-    # Increase max_obstacles to handle corner pins (4 pins * 2 cars = 8 + extras)
-    teb = TEBMPC(max_obstacles=25)
+    teb = TEBMPC(max_obstacles=25, env_cfg=cfg_env)
 
     start_idx = _next_episode_index(final_out_dir)
     success_count = 0

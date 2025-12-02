@@ -1,24 +1,9 @@
 # mpc/config_mpc.yaml
-# Common configuration for TEB-style MPC.
-
-vehicle:
-  length: 0.36        # [m] CRC footprint (approx)
-  width: 0.26         # [m]
-  wheelbase: 0.25     # [m]
-  max_steer: 0.523    # [rad]
-  max_steer_rate: 0.5 # [rad/s]
-  max_vel: 1.0        # [m/s]
-  max_acc: 1.0        # [m/s^2]
-
-environment:
-  size_x: 4.0         # [m]
-  size_y: 4.0         # [m]
-  safety_margin: 0.0 # [m] Reduced margin for tight maneuvers
+# Only MPC-specific settings. Vehicle + world + dt come from config_env.yaml.
 
 mpc:
-  # match ParkingEnv dt
-  dt: 0.1                 # [s]
-  horizon_steps: 80       # 5.0s horizon (Critical for Parallel Parking)
+  # Horizon / solver
+  horizon_steps: 80       # 5.0s horizon (critical for parallel parking)
   max_iter: 200
 
   # Global weights (defaults)
@@ -26,29 +11,33 @@ mpc:
   w_goal_theta: 80.0
   w_goal_v: 0.5           # penalise non-zero speed near goal
 
-  # lighter smoothing so it can manoeuvre
+  # Control effort + smoothing
   w_steer: 1.0
   w_accel: 0.1
   w_smooth_steer: 0.01
   w_smooth_accel: 0.02
 
-  # obstacle cost (increased to prevent collisions in tight gaps)
-  w_collision: 40.0
-  alpha_obs: 3.0
+  # Obstacle / collision cost
+  w_collision: 40.0       # high to avoid contacts in tight gaps
+  alpha_obs: 3.0          # shape of obstacle potential (used inside MPC)
 
-  # world boundary penalty (stay inside 4x4 box)
+  # World boundary penalty (stay inside 4x4 box)
   w_boundary: 30.0
   boundary_margin: 0.2
 
+  # Default reverse penalty (profile can override)
+  w_reverse_penalty: 0.1
+
+  # Scenario-specific profile overrides
   profiles:
     parallel:
-      w_goal_xy: 350.0        # Lower priority on exact center
-      w_goal_theta: 80.0    # HIGH priority on being straight
-      w_steer: 0.1       # Cheap steering
+      w_goal_xy: 350.0         # very strong on longitudinal positioning
+      w_goal_theta: 80.0       # high priority on being straight
+      w_steer: 0.1             # cheap steering
       w_accel: 0.1
-      w_smooth_steer: 0.01   # Allow fast counter-steering
+      w_smooth_steer: 0.01     # allow fast counter-steering
       w_smooth_accel: 0.01
-      w_reverse_penalty: 0.08 # CRITICAL: Free reversing!
+      w_reverse_penalty: 0.08  # free reversing
       w_collision: 25.0
 
     perpendicular:

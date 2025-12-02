@@ -5,7 +5,8 @@ from .reward_functions import compute_reward
 
 
 class ParkingEnv:
-    """Gym-like parking environment (perpendicular parking).
+    """
+    Gym-like parking environment (parallel or perpendicular, depending on config).
 
     Observation:
         [x, y, yaw, v,
@@ -17,47 +18,46 @@ class ParkingEnv:
     """
 
     def __init__(self, config):
-        # --------------------------------------------------------------
-        # Core settings
-        # --------------------------------------------------------------
-        self.dt = config.get("dt", 0.1)
-        self.model = KinematicBicycle(config["vehicle"])
+        # ------------ core settings (from config_env.yaml) ------------
+        self.vehicle_params = config["vehicle"]
+        self.dt = config["dt"]
+        self.max_steps = config["max_steps"]
 
-        # goal will be overwritten each episode when we sample the bay
+        self.model = KinematicBicycle(self.vehicle_params)
+
+        # This "goal" will be overwritten each episode when sampling the bay
         self.goal = np.array(config.get("goal", [0.0, 0.0, 0.0]), dtype=float)
 
-        self.max_steps = config.get("max_steps", 200)
+        # world bounds for 4×4 m world (or fallback if missing)
+        world_cfg = config.get("world", {"width": 4.0, "height": 4.0})
+        width = float(world_cfg.get("width", 4.0))
+        height = float(world_cfg.get("height", 4.0))
+        half_w = width / 2.0
+        half_h = height / 2.0
+        self.x_min = -half_w
+        self.x_max = half_w
+        self.y_min = -half_h
+        self.y_max = half_h
+
         self.state = None
         self.step_count = 0
-
-        # world bounds for 4×4 m world (or fallback)
-        self.world = config.get("world", None)
-        if self.world is not None:
-            width = float(self.world.get("width", 4.0))
-            height = float(self.world.get("height", 4.0))
-            half_w = width / 2.0
-            half_h = height / 2.0
-            self.x_min = -half_w
-            self.x_max = half_w
-            self.y_min = -half_h
-            self.y_max = half_h
-        else:
-            # fallback to old [-1, 1] × [-1, 1] region
-            self.x_min, self.x_max = -1.0, 1.0
-            self.y_min, self.y_max = -1.0, 1.0
 
         # per-episode layout config
         self.parking_cfg = config.get("parking", {})
         self.spawn_cfg = config.get("spawn_lane", {})
 
-        # Obstacle manager: walls + neighbours + random obstacles
+        # obstacles: walls + neighbours + optional random
         obs_cfg = config.get("obstacles", {})
-        self.obstacles = ObstacleManager(obs_cfg, goal=self.goal)
+        self.obstacles = ObstacleManager(
+            obs_cfg,
+            goal=self.goal,
+            vehicle_params=self.vehicle_params,
+        )
 
     # ------------------------------------------------------------------
     # Episode setup
     # ------------------------------------------------------------------
-    def reset(self, randomize=True):
+    def reset(self, randomize: bool = True):
         if randomize:
             # 1) sample new bay (goal pose) + obstacles
             self._sample_bay_and_obstacles()
@@ -73,43 +73,57 @@ class ParkingEnv:
         return self._get_obs()
 
     def _sample_bay_and_obstacles(self):
-        """Sample bay position (goal) and regenerate obstacle layout."""
+        """
+        Sample bay position (goal) and regenerate obstacle layout.
+
+        Uses:
+          parking.bay.center_y (optional)
+          parking.bay.goal_offset_y (optional)
+          parking.bay.yaw
+        from config_env.yaml scenarios.*.parking.bay
+        """
         bay_cfg = self.parking_cfg.get("bay", {})
 
+        # We center the bay at x = 0 in world coordinates
         cx = 0.0
         center_y = float(bay_cfg.get("center_y", 0.0))
         yaw = float(bay_cfg.get("yaw", 0.0))
 
-        # ---- 1) Ego goal (rear axle) ----
-        # draw_car uses dist_to_center = 0.13 for the geometric center
-        # We let config override how far the rear axle is from the bay center.
-        default_offset = -0.13  # current behavior: goal is 0.13 below center
-        goal_offset_y = float(bay_cfg.get("goal_offset_y", default_offset))
+        # derive default offset from vehicle length so it matches drawing/collision
+        L = float(self.vehicle_params.get("length", 0.36))
+        dist_to_center = L / 2.0 - 0.05  # must match ObstacleManager.get_car_corners
+        default_goal_offset_y = -dist_to_center
+
+        goal_offset_y = float(bay_cfg.get("goal_offset_y", default_goal_offset_y))
 
         goal_y = center_y + goal_offset_y
 
-        # Rear-axle goal used by MPC / success check
+        # rear-axle goal used by MPC / success check
         self.goal = np.array([cx, goal_y, yaw], dtype=float)
 
-        # ---- 2) Obstacles use BAY CENTER (so neighbours don't move) ----
+        # Obstacles use the BAY CENTER so neighbours stay fixed around slot
         bay_pose_for_obstacles = np.array([cx, center_y, yaw], dtype=float)
         self.obstacles.set_goal(bay_pose_for_obstacles)
         self.obstacles.randomize()
 
     def _random_start(self):
-        """Spawn the ego car relative to the current goal."""
+        """
+        Spawn the ego car relative to the current goal, using spawn_lane config:
+
+          spawn_lane:
+            y_min, y_max
+            yaw
+            x_min_offset, x_max_offset  (for parallel)
+            x_half_width               (for perpendicular)
+        """
         gx, gy, gyaw = self.goal
 
-        # Standard lane Y offsets
         lane_y_min = float(self.spawn_cfg.get("y_min", gy - 1.6))
         lane_y_max = float(self.spawn_cfg.get("y_max", gy - 1.3))
 
-        # Heading configuration
         spawn_yaw = float(self.spawn_cfg.get("yaw", gyaw))
 
-        # --- FIX: Asymmetric X Spawning (Force start ahead) ---
-        # If x_min_offset is present, use [gx + min, gx + max]
-        # Otherwise fallback to symmetric x_half_width
+        # Asymmetric spawning (e.g. parallel) if x_min_offset is specified
         if "x_min_offset" in self.spawn_cfg:
             x_min = gx + float(self.spawn_cfg["x_min_offset"])
             x_max = gx + float(self.spawn_cfg.get("x_max_offset", 2.0))
@@ -132,7 +146,11 @@ class ParkingEnv:
             return candidate
 
         # Fallback if random placement fails
-        return np.array([x_max, 0.5 * (lane_y_min + lane_y_max), spawn_yaw, 0.0], dtype=float)
+        return np.array(
+            [x_max, 0.5 * (lane_y_min + lane_y_max), spawn_yaw, 0.0],
+            dtype=float,
+        )
+
     # ------------------------------------------------------------------
     # Core env API
     # ------------------------------------------------------------------
@@ -179,7 +197,10 @@ class ParkingEnv:
         return self._get_obs(), reward, done, info
 
     def _is_success(self, state):
-        # Match success thresholds with reward_functions.compute_reward()
+        """
+        Match success thresholds with reward_functions.compute_reward().
+        (If you want these from config later, we can add a reward section.)
+        """
         x, y, yaw, v = state
         gx, gy, gyaw = self.goal
         pos_err = np.hypot(gx - x, gy - y)
