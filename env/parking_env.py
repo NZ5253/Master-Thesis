@@ -195,54 +195,46 @@ class ParkingEnv:
 
     def _is_success(self, state):
         """
-        Parallel:
-          success if CAR CENTER is near the slot center (between neighbour cars),
-          with small yaw and low speed.
-
-        Perpendicular:
-          keep the original rear-axle-based condition.
+        Parallel: success if CAR CENTER is close to the slot center (between neighbours),
+                  with small yaw and low speed.
+        Perpendicular: keep a simple rear-axle based test.
         """
-        x_rear, y_rear, yaw, v = state
+        x_ra, y_ra, yaw, v = state
         gx, gy, gyaw = self.goal
 
-        # common yaw + speed check
+        # --- common yaw + speed check ---
         yaw_err = abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi)
-        if abs(v) > 0.05 or yaw_err > 0.10:
+        if abs(v) > 0.05:  # must be (almost) stopped
+            return False
+        if yaw_err > 0.05:  # ~2.9 degrees
             return False
 
         bay_cfg = self.parking_cfg.get("bay", {})
         bay_yaw = float(bay_cfg.get("yaw", 0.0))
-        is_parallel = abs(bay_yaw) < 0.3
 
-        if is_parallel:
-            # ---- PARALLEL: CAR CENTER vs SLOT CENTER ----
-            L = float(self.vehicle_params.get("length", 0.36))
-            dist_to_center = L / 2.0 - 0.05  # must match ObstacleManager.get_car_corners
+        # vehicle geometry
+        L = float(self.vehicle_params.get("length", 0.36))
+        dist_to_center = L / 2.0 - 0.05  # must match ObstacleManager / viz
 
-            # car center in world frame
-            cx = x_rear + dist_to_center * np.cos(yaw)
-            cy = y_rear + dist_to_center * np.sin(yaw)
+        # car center in world frame
+        cx = x_ra + dist_to_center * np.cos(yaw)
+        cy = y_ra + dist_to_center * np.sin(yaw)
 
-            # desired centre point = middle of gap between neighbours
+        if abs(bay_yaw) < 0.3:
+            # -------- PARALLEL: center-based success --------
             slot_cx = 0.0
-            slot_cy = float(bay_cfg.get("center_y", 0.0))
+            slot_cy = float(bay_cfg.get("center_y", 0.13))
 
-            # how centred? (x = along the row, y = into/out of curb)
             along_err = abs(cx - slot_cx)
             lateral_err = abs(cy - slot_cy)
 
-            # tolerances: tune these to be stricter or looser
-            centred_ok = along_err < 0.05      # ±5 cm between neighbours
-            lateral_ok = lateral_err < 0.05    # ±5 cm from ideal bay.center_y
-
-            return centred_ok and lateral_ok
+            # stricter tolerances → car ends really centred & deep
+            return (along_err < 0.03) and (lateral_err < 0.03)
 
         else:
-            # ---- PERPENDICULAR: keep old rear-axle goal logic ----
-            pos_err = np.hypot(gx - x_rear, gy - y_rear)
-            return (pos_err < 0.08)
-
-
+            # -------- PERPENDICULAR: keep simple rear-axle check --------
+            pos_err = np.hypot(gx - x_ra, gy - y_ra)
+            return pos_err < 0.08
 
     def _out_of_bounds(self, state):
         """Treat leaving the world rectangle as a collision."""

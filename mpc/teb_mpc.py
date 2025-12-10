@@ -136,7 +136,6 @@ class TEBMPC:
         if ca is not None:
             self._build_solver()
 
-
     def _apply_profile(self, profile: str):
         if self._current_profile == profile:
             return
@@ -151,19 +150,26 @@ class TEBMPC:
         print(f"\n[MPC] Switching to Profile: {profile.upper()}")
         p_cfg = profiles[profile]
 
-        if "w_goal_xy" in p_cfg: self.w_goal_xy = float(p_cfg["w_goal_xy"])
-        if "w_goal_theta" in p_cfg: self.w_goal_theta = float(p_cfg["w_goal_theta"])
-        if "w_collision" in p_cfg: self.w_collision = float(p_cfg["w_collision"])
-        if "w_steer" in p_cfg: self.w_steer = float(p_cfg["w_steer"])
+        if "w_goal_xy" in p_cfg:      self.w_goal_xy = float(p_cfg["w_goal_xy"])
+        if "w_goal_theta" in p_cfg:   self.w_goal_theta = float(p_cfg["w_goal_theta"])
+        if "w_goal_v" in p_cfg:       self.w_goal_v = float(p_cfg["w_goal_v"])
+        if "w_collision" in p_cfg:    self.w_collision = float(p_cfg["w_collision"])
+        if "w_steer" in p_cfg:        self.w_steer = float(p_cfg["w_steer"])
+        if "w_accel" in p_cfg:        self.w_accel = float(p_cfg["w_accel"])
         if "w_smooth_steer" in p_cfg: self.w_smooth_steer = float(p_cfg["w_smooth_steer"])
-        if "w_reverse_penalty" in p_cfg: self.w_reverse_penalty = float(p_cfg["w_reverse_penalty"])
+        if "w_smooth_accel" in p_cfg: self.w_smooth_accel = float(p_cfg["w_smooth_accel"])
+        if "w_reverse_penalty" in p_cfg:
+            self.w_reverse_penalty = float(p_cfg["w_reverse_penalty"])
 
-        print(f"  -> w_goal_xy: {self.w_goal_xy}")
-        print(f"  -> w_goal_theta: {self.w_goal_theta}")
-        print(f"  -> w_collision: {self.w_collision}")
-        print(f"  -> w_steer: {self.w_steer}")
-        print(f"  -> w_smooth_steer: {self.w_smooth_steer}")
-        print(f"  -> w_reverse_penalty: {self.w_reverse_penalty}")
+        print(f"  -> w_goal_xy:        {self.w_goal_xy}")
+        print(f"  -> w_goal_theta:     {self.w_goal_theta}")
+        print(f"  -> w_goal_v:         {self.w_goal_v}")
+        print(f"  -> w_collision:      {self.w_collision}")
+        print(f"  -> w_steer:          {self.w_steer}")
+        print(f"  -> w_accel:          {self.w_accel}")
+        print(f"  -> w_smooth_steer:   {self.w_smooth_steer}")
+        print(f"  -> w_smooth_accel:   {self.w_smooth_accel}")
+        print(f"  -> w_reverse_penalty:{self.w_reverse_penalty}")
 
     def _build_solver(self) -> None:
         N, dt, L = self.N, self.dt, float(self.vehicle_cfg.get("wheelbase", 0.25))
@@ -294,7 +300,7 @@ class TEBMPC:
                 r = 0.30
             elif max_dim > 0.6 and min_dim < 0.05:
                 # Long, thin bar -> curb: softer, narrower repulsion
-                r = 0.07
+                r = 0.04
             else:
                 # Parked cars etc. (4 corner pins or small blocks)
                 r = 0.10
