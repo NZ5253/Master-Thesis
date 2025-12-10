@@ -16,26 +16,34 @@ def _env_obstacles_to_teb(env: ParkingEnv) -> List[Obstacle]:
 
     for o in env.obstacles.obstacles:
         cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
+        kind = o.get("kind", None)
 
+        # --- SOFT CURB: treat as one long thin obstacle ---
+        if kind == "curb":
+            # Use half-width / half-height; teb_mpc.py will recognise it
+            # as "long & thin" and assign a softer radius.
+            obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
+            continue
+
+        # Thin -> likely wall or narrow bar: single Obstacle
         is_thin = (w < 0.1) or (h < 0.1)
         if is_thin:
             obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
             continue
 
-        # Neighbor Car Logic
+        # "Fat" rectangles (cars): split into 4 corner pins
         if w > 0.2 and h > 0.2:
             half_w = w / 2.0
             half_h = h / 2.0
             pin_radius = 0.05
 
-            # 4 Precise Corner Pins
-            # This tells the MPC: "Here are the exact edges. Pivot around them."
             obs_list.append(Obstacle(cx - half_w, cy + half_h, hx=pin_radius, hy=pin_radius))  # TL
             obs_list.append(Obstacle(cx + half_w, cy + half_h, hx=pin_radius, hy=pin_radius))  # TR
             obs_list.append(Obstacle(cx - half_w, cy - half_h, hx=pin_radius, hy=pin_radius))  # BL
             obs_list.append(Obstacle(cx + half_w, cy - half_h, hx=pin_radius, hy=pin_radius))  # BR
 
     return obs_list
+
 
 def _next_episode_index(out_dir: str) -> int:
     if not os.path.exists(out_dir): return 0

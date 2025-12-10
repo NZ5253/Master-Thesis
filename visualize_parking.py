@@ -120,16 +120,25 @@ def draw_obstacles(ax, env_or_obstacles):
     for o in obstacles:
         cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
         theta = o.get("theta", 0.0)
+        kind = o.get("kind", None)
 
-        # Style walls vs cars
-        if w > 1.5 or h > 1.5:
+        # Style walls vs cars vs curb
+        if kind == "curb":
+            # Soft curb: dark gray bar just under the parked cars
+            color = 'dimgray'
+            alpha = 0.7
+            zorder = 4
+        elif w > 1.5 or h > 1.5:
+            # World walls
             color = 'black'
             alpha = 0.3
             zorder = 1
         else:
+            # Parked cars / random boxes
             color = 'skyblue'
             alpha = 0.8
             zorder = 5
+
 
         # corners in local frame (centered)
         corners = np.array([
@@ -153,13 +162,31 @@ def draw_obstacles(ax, env_or_obstacles):
 
 
 def draw_goal(ax, env_or_goal):
-    """Draw the parking goal as a red X."""
-    if hasattr(env_or_goal, "goal"):
-        gx, gy, gyaw = env_or_goal.goal
-    else:
-        gx, gy, gyaw = env_or_goal
-    ax.plot(gx, gy, "rx", markersize=10, markeredgewidth=2, zorder=10)
+    """
+    Draw the desired CAR CENTER as a red X.
 
+    - If env_or_goal is a ParkingEnv, we take env.goal (rear axle) and
+      env.vehicle_params.length to compute the car center.
+    - If env_or_goal is a (gx, gy, gyaw) array/tuple, we assume that is
+      the REAR-AXLE goal and use a default length=0.36 to compute center.
+    """
+    # --- get rear-axle goal pose + vehicle length ---
+    if hasattr(env_or_goal, "goal"):
+        # live env
+        gx, gy, gyaw = env_or_goal.goal
+        L = float(env_or_goal.vehicle_params.get("length", 0.36))
+    else:
+        # numpy array / tuple (gx, gy, gyaw)
+        gx, gy, gyaw = env_or_goal
+        L = 0.36  # CRC default length
+
+    # shift from rear axle to CAR CENTER (must match your env/obstacle code)
+    dist_to_center = L / 2.0 - 0.05
+    cx = gx + dist_to_center * np.cos(gyaw)
+    cy = gy + dist_to_center * np.sin(gyaw)
+
+    # Draw the CAR CENTER goal
+    ax.plot(cx, cy, "rx", markersize=10, markeredgewidth=2, zorder=10)
 
 # ============================================================
 #  TEB obstacle conversion & debugging drawing
@@ -168,21 +195,28 @@ def draw_goal(ax, env_or_goal):
 def _env_obstacles_to_teb(env: ParkingEnv):
     """
     Convert env.obstacles -> list[Obstacle] for TEB/MPC.
-    - Thin walls: a single big Obstacle (rectangle-like)
-    - Fat neighbour cars: 4 small 'corner pins' + (optionally) center
+    - Soft curb: single long thin obstacle (guidance, not hard wall)
+    - Thin walls: single big Obstacle
+    - Fat neighbour cars: 4 small 'corner pins'
     """
     obs_list = []
 
     for o in env.obstacles.obstacles:
         cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
+        kind = o.get("kind", None)
 
-        # Thin → likely wall or narrow object: single Obstacle
+        # Soft curb
+        if kind == "curb":
+            obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
+            continue
+
+        # Thin → likely wall or narrow bar
         is_thin = (w < 0.1) or (h < 0.1)
         if is_thin:
             obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
             continue
 
-        # "Fat" objects (cars): split into 4 corner pins
+        # "Fat" rectangles (cars): split into 4 corner pins
         if w > 0.2 and h > 0.2:
             half_w = w / 2.0
             half_h = h / 2.0

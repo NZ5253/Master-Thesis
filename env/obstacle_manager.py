@@ -40,8 +40,6 @@ class ObstacleManager:
         """Rebuild obstacle layout for current goal."""
         self._build_from_goal()
 
-    # ------------------- layout generation -------------------
-
     def _build_from_goal(self) -> None:
         gx, gy, gyaw = self.goal
         obs: List[Dict[str, float]] = []
@@ -125,6 +123,26 @@ class ObstacleManager:
                             "theta": float(gyaw),
                         }
                     )
+
+                # ----- NEW: soft curb just below both neighbours -----
+                curb_gap = float(self.neigh_cfg.get("curb_gap", 0.05))         # distance from parked cars
+                curb_thickness = float(self.neigh_cfg.get("curb_thickness", 0.04))
+
+                # For your current config gyaw ≈ 0, so we place a thin bar under the neighbours
+                curb_y = gy - car_h / 2.0 - curb_gap - curb_thickness / 2.0
+                curb_width = 2.0 * offset + car_w  # span covering both neighbours + slot
+
+                obs.append(
+                    {
+                        "x": float(gx),              # centred under the bay
+                        "y": float(curb_y),
+                        "w": float(curb_width),
+                        "h": float(curb_thickness),
+                        "theta": 0.0,
+                        "kind": "curb",              # mark as soft curb
+                    }
+                )
+
             else:
                 # --------- PERPENDICULAR / OTHER: neighbours side-by-side ----
                 # Place neighbours offset along local y-axis of bay (left/right)
@@ -153,6 +171,7 @@ class ObstacleManager:
         #    using self.random_cfg if you want.
 
         self.obstacles = obs
+
 
     # ---------------------- features / collision ----------------------
 
@@ -219,6 +238,9 @@ class ObstacleManager:
         corners = self.get_car_corners(state)
         for ox, oy in corners:
             for o in self.obstacles:
+                # soft curb: allowed to ride over, only used as soft cost in MPC
+                if o.get("kind") == "curb":
+                    continue
                 if (
                     abs(ox - o["x"]) < o["w"] / 2.0
                     and abs(oy - o["y"]) < o["h"] / 2.0

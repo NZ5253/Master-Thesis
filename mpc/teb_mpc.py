@@ -282,16 +282,25 @@ class TEBMPC:
             P[idx] = o.cx
             P[idx + 1] = o.cy
 
-            # OLD
-            # r = np.hypot(o.hx, o.hy)
+            # Classify obstacle shape:
+            #   - big (hx or hy > 1.0): world walls
+            #   - long & very thin: curb-like bar
+            #   - other "fat" blocks: parked cars / random boxes
+            max_dim = max(o.hx, o.hy)
+            min_dim = min(o.hx, o.hy)
 
-            # NEW: smaller radius for cars, slightly larger for walls
-            r = np.hypot(o.hx, o.hy)
-            if max(o.hx, o.hy) > 1.0:  # world wall
+            if max_dim > 1.0:
+                # World walls: strong, wide repulsion
                 r = 0.30
-            else:  # parked cars etc.
-                r = 0.10  # <- key: lets you get deeper into the gap
+            elif max_dim > 0.6 and min_dim < 0.05:
+                # Long, thin bar -> curb: softer, narrower repulsion
+                r = 0.07
+            else:
+                # Parked cars etc. (4 corner pins or small blocks)
+                r = 0.10
+
             P[idx + 2] = r
+
 
         lbx = [-np.inf] * 4 * (self.N + 1) + [-0.52, -1.0] * self.N
         ubx = [np.inf] * 4 * (self.N + 1) + [0.52, 1.0] * self.N

@@ -53,6 +53,7 @@ class ParkingEnv:
             goal=self.goal,
             vehicle_params=self.vehicle_params,
         )
+        self.bay_center = np.array([0.0, 0.0, 0.0], dtype=float)
 
     # ------------------------------------------------------------------
     # Episode setup
@@ -73,37 +74,33 @@ class ParkingEnv:
         return self._get_obs()
 
     def _sample_bay_and_obstacles(self):
-        """
-        Sample bay position (goal) and regenerate obstacle layout.
-
-        Uses:
-          parking.bay.center_y (optional)
-          parking.bay.goal_offset_y (optional)
-          parking.bay.yaw
-        from config_env.yaml scenarios.*.parking.bay
-        """
         bay_cfg = self.parking_cfg.get("bay", {})
 
-        # We center the bay at x = 0 in world coordinates
         cx = 0.0
         center_y = float(bay_cfg.get("center_y", 0.0))
         yaw = float(bay_cfg.get("yaw", 0.0))
 
-        # derive default offset from vehicle length so it matches drawing/collision
+        self.bay_center = np.array([cx, center_y, yaw], dtype=float)
+
         L = float(self.vehicle_params.get("length", 0.36))
         dist_to_center = L / 2.0 - 0.05  # must match ObstacleManager.get_car_corners
-        default_goal_offset_y = -dist_to_center
 
-        goal_offset_y = float(bay_cfg.get("goal_offset_y", default_goal_offset_y))
+        if abs(yaw) < 0.3:
+            # PARALLEL:
+            # We want CAR CENTER to be at the bay center (0, center_y).
+            # Rear-axle goal is therefore shifted backwards along the car axis.
+            goal_x = cx - dist_to_center * np.cos(yaw)
+            goal_y = center_y - dist_to_center * np.sin(yaw)
+        else:
+            # PERPENDICULAR: allow config override
+            default_goal_offset_y = -dist_to_center
+            goal_offset_y = float(bay_cfg.get("goal_offset_y", default_goal_offset_y))
+            goal_x = cx
+            goal_y = center_y + goal_offset_y
 
-        goal_y = center_y + goal_offset_y
+        self.goal = np.array([goal_x, goal_y, yaw], dtype=float)
 
-        # rear-axle goal used by MPC / success check
-        self.goal = np.array([cx, goal_y, yaw], dtype=float)
-
-        # Obstacles use the BAY CENTER so neighbours stay fixed around slot
-        bay_pose_for_obstacles = np.array([cx, center_y, yaw], dtype=float)
-        self.obstacles.set_goal(bay_pose_for_obstacles)
+        self.obstacles.set_goal(self.bay_center)
         self.obstacles.randomize()
 
     def _random_start(self):
@@ -198,14 +195,54 @@ class ParkingEnv:
 
     def _is_success(self, state):
         """
-        Match success thresholds with reward_functions.compute_reward().
-        (If you want these from config later, we can add a reward section.)
+        Parallel:
+          success if CAR CENTER is near the slot center (between neighbour cars),
+          with small yaw and low speed.
+
+        Perpendicular:
+          keep the original rear-axle-based condition.
         """
-        x, y, yaw, v = state
+        x_rear, y_rear, yaw, v = state
         gx, gy, gyaw = self.goal
-        pos_err = np.hypot(gx - x, gy - y)
+
+        # common yaw + speed check
         yaw_err = abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi)
-        return (pos_err < 0.08) and (yaw_err < 0.1) and (abs(v) < 0.05)
+        if abs(v) > 0.05 or yaw_err > 0.10:
+            return False
+
+        bay_cfg = self.parking_cfg.get("bay", {})
+        bay_yaw = float(bay_cfg.get("yaw", 0.0))
+        is_parallel = abs(bay_yaw) < 0.3
+
+        if is_parallel:
+            # ---- PARALLEL: CAR CENTER vs SLOT CENTER ----
+            L = float(self.vehicle_params.get("length", 0.36))
+            dist_to_center = L / 2.0 - 0.05  # must match ObstacleManager.get_car_corners
+
+            # car center in world frame
+            cx = x_rear + dist_to_center * np.cos(yaw)
+            cy = y_rear + dist_to_center * np.sin(yaw)
+
+            # desired centre point = middle of gap between neighbours
+            slot_cx = 0.0
+            slot_cy = float(bay_cfg.get("center_y", 0.0))
+
+            # how centred? (x = along the row, y = into/out of curb)
+            along_err = abs(cx - slot_cx)
+            lateral_err = abs(cy - slot_cy)
+
+            # tolerances: tune these to be stricter or looser
+            centred_ok = along_err < 0.05      # ±5 cm between neighbours
+            lateral_ok = lateral_err < 0.05    # ±5 cm from ideal bay.center_y
+
+            return centred_ok and lateral_ok
+
+        else:
+            # ---- PERPENDICULAR: keep old rear-axle goal logic ----
+            pos_err = np.hypot(gx - x_rear, gy - y_rear)
+            return (pos_err < 0.08)
+
+
 
     def _out_of_bounds(self, state):
         """Treat leaving the world rectangle as a collision."""
