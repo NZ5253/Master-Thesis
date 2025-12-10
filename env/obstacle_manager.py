@@ -40,6 +40,35 @@ class ObstacleManager:
         """Rebuild obstacle layout for current goal."""
         self._build_from_goal()
 
+
+    def _rects_intersect(self, a_corners: np.ndarray, b_corners: np.ndarray) -> bool:
+        """
+        Check intersection between two convex quadrilaterals (rectangles)
+        using the Separating Axis Theorem. Corners are (4, 2) arrays.
+        """
+        axes = []
+
+        # Edges from both polygons
+        for corners in (a_corners, b_corners):
+            for i in range(4):
+                p1 = corners[i]
+                p2 = corners[(i + 1) % 4]
+                edge = p2 - p1
+                axis = np.array([-edge[1], edge[0]])  # perpendicular
+                if np.allclose(axis, 0.0):
+                    continue
+                axes.append(axis)
+
+        # Test all candidate axes
+        for axis in axes:
+            proj_a = a_corners @ axis
+            proj_b = b_corners @ axis
+            if proj_a.max() < proj_b.min() or proj_b.max() < proj_a.min():
+                # Found separating axis -> no overlap
+                return False
+
+        return True
+
     def _build_from_goal(self) -> None:
         gx, gy, gyaw = self.goal
         obs: List[Dict[str, float]] = []
@@ -232,18 +261,51 @@ class ObstacleManager:
 
     def check_collision(self, state, vehicle_model) -> bool:
         """
-        Simple AABB-based collision check between ego corners and
-        rectangular obstacles.
+        Collision check between ego rectangle and rectangular obstacles.
+
+        - For axis-aligned obstacles (theta ~ 0), keep the fast AABB test
+          (parallel neighbours, walls).
+        - For rotated obstacles (perpendicular neighbours), use an
+          oriented-rectangle vs oriented-rectangle SAT test so the
+          collision shape matches the drawn geometry.
         """
-        corners = self.get_car_corners(state)
-        for ox, oy in corners:
-            for o in self.obstacles:
-                # soft curb: allowed to ride over, only used as soft cost in MPC
-                if o.get("kind") == "curb":
-                    continue
-                if (
-                    abs(ox - o["x"]) < o["w"] / 2.0
-                    and abs(oy - o["y"]) < o["h"] / 2.0
-                ):
-                    return True
+        ego_corners = self.get_car_corners(state)
+
+        for o in self.obstacles:
+            # soft curb: allowed to ride over, only used as soft cost in MPC
+            if o.get("kind") == "curb":
+                continue
+
+            cx = float(o["x"])
+            cy = float(o["y"])
+            w = float(o["w"])
+            h = float(o["h"])
+            theta = float(o.get("theta", 0.0))
+
+            # Axis-aligned obstacles: old AABB check (parallel + walls)
+            if abs(theta) < 1e-3:
+                for ox, oy in ego_corners:
+                    if abs(ox - cx) < w / 2.0 and abs(oy - cy) < h / 2.0:
+                        return True
+                continue
+
+            # Rotated rectangle (perpendicular neighbour cars)
+            half_w = w / 2.0
+            half_h = h / 2.0
+            corners_local = np.array(
+                [
+                    [half_w,  half_h],
+                    [half_w, -half_h],
+                    [-half_w, -half_h],
+                    [-half_w,  half_h],
+                ]
+            )
+            c, s = np.cos(theta), np.sin(theta)
+            R = np.array([[c, -s], [s, c]])
+            obs_corners = corners_local @ R.T + np.array([cx, cy])
+
+            if self._rects_intersect(ego_corners, obs_corners):
+                return True
+
         return False
+

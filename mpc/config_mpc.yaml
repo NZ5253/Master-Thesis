@@ -48,6 +48,8 @@ mpc:
 
 
     perpendicular:
-      w_goal_xy: 80.0
-      w_goal_theta: 50.0
+      w_goal_xy: 100.0        # slightly stronger pull to the bay
+      w_goal_theta: 60.0      # care a bit more about being straight
       w_reverse_penalty: 0.1
+      w_collision: 60.0       # ↑ stronger repulsion from neighbour cars
+

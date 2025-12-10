@@ -17,6 +17,7 @@ def _env_obstacles_to_teb(env: ParkingEnv) -> List[Obstacle]:
     for o in env.obstacles.obstacles:
         cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
         kind = o.get("kind", None)
+        theta = float(o.get("theta", 0.0))
 
         # --- SOFT CURB: treat as one long thin obstacle ---
         if kind == "curb":
@@ -31,18 +32,33 @@ def _env_obstacles_to_teb(env: ParkingEnv) -> List[Obstacle]:
             obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
             continue
 
-        # "Fat" rectangles (cars): split into 4 corner pins
+        # "Fat" rectangles (cars): split into 4 *rotated* corner pins
         if w > 0.2 and h > 0.2:
+            pin_radius = 0.05
             half_w = w / 2.0
             half_h = h / 2.0
-            pin_radius = 0.05
 
-            obs_list.append(Obstacle(cx - half_w, cy + half_h, hx=pin_radius, hy=pin_radius))  # TL
-            obs_list.append(Obstacle(cx + half_w, cy + half_h, hx=pin_radius, hy=pin_radius))  # TR
-            obs_list.append(Obstacle(cx - half_w, cy - half_h, hx=pin_radius, hy=pin_radius))  # BL
-            obs_list.append(Obstacle(cx + half_w, cy - half_h, hx=pin_radius, hy=pin_radius))  # BR
+            # corners in local (centered) frame
+            corners_local = np.array([
+                [ half_w,  half_h],
+                [ half_w, -half_h],
+                [-half_w, -half_h],
+                [-half_w,  half_h],
+            ])
+
+            # rotate by theta and shift to world
+            c, s = np.cos(theta), np.sin(theta)
+            R = np.array([[c, -s], [s, c]])
+            corners_world = corners_local @ R.T + np.array([cx, cy])
+
+            for px, py in corners_world:
+                obs_list.append(
+                    Obstacle(cx=float(px), cy=float(py),
+                             hx=pin_radius, hy=pin_radius)
+                )
 
     return obs_list
+
 
 
 def _next_episode_index(out_dir: str) -> int:

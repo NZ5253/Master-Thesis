@@ -197,13 +197,14 @@ def _env_obstacles_to_teb(env: ParkingEnv):
     Convert env.obstacles -> list[Obstacle] for TEB/MPC.
     - Soft curb: single long thin obstacle (guidance, not hard wall)
     - Thin walls: single big Obstacle
-    - Fat neighbour cars: 4 small 'corner pins'
+    - Fat neighbour cars: 4 small 'corner pins' at ROTATED corners
     """
     obs_list = []
 
     for o in env.obstacles.obstacles:
         cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
         kind = o.get("kind", None)
+        theta = float(o.get("theta", 0.0))
 
         # Soft curb
         if kind == "curb":
@@ -216,30 +217,31 @@ def _env_obstacles_to_teb(env: ParkingEnv):
             obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
             continue
 
-        # "Fat" rectangles (cars): split into 4 corner pins
+        # "Fat" rectangles (cars): 4 rotated corner pins
         if w > 0.2 and h > 0.2:
+            pin_radius = 0.05  # 5 cm
             half_w = w / 2.0
             half_h = h / 2.0
-            pin_radius = 0.05  # 5 cm
 
-            obs_list.append(
-                Obstacle(cx=cx - half_w, cy=cy + half_h,
-                         hx=pin_radius, hy=pin_radius)
-            )
-            obs_list.append(
-                Obstacle(cx=cx + half_w, cy=cy + half_h,
-                         hx=pin_radius, hy=pin_radius)
-            )
-            obs_list.append(
-                Obstacle(cx=cx - half_w, cy=cy - half_h,
-                         hx=pin_radius, hy=pin_radius)
-            )
-            obs_list.append(
-                Obstacle(cx=cx + half_w, cy=cy - half_h,
-                         hx=pin_radius, hy=pin_radius)
-            )
+            corners_local = np.array([
+                [ half_w,  half_h],
+                [ half_w, -half_h],
+                [-half_w, -half_h],
+                [-half_w,  half_h],
+            ])
+
+            c, s = np.cos(theta), np.sin(theta)
+            R = np.array([[c, -s], [s, c]])
+            corners_world = corners_local @ R.T + np.array([cx, cy])
+
+            for px, py in corners_world:
+                obs_list.append(
+                    Obstacle(cx=float(px), cy=float(py),
+                             hx=pin_radius, hy=pin_radius)
+                )
 
     return obs_list
+
 
 
 def draw_teb_obstacles(ax, env):
