@@ -120,6 +120,7 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
         best_pos_err = float("inf")
         best_yaw_err = float("inf")
         best_step = 0
+        phase_history = []
 
         while not done:
             state = VehicleState(x=env.state[0], y=env.state[1], yaw=env.state[2], v=env.state[3])
@@ -129,12 +130,25 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
             try:
                 sol = teb.solve(state, goal, obstacles, profile=scenario)
                 action = np.array([float(sol.controls[0, 0]), float(sol.controls[0, 1])])
-            except Exception:
+
+                # Track phase transitions
+                if sol.phase is not None:
+                    phase_name = sol.phase.value
+                    if len(phase_history) == 0 or phase_history[-1] != phase_name:
+                        phase_history.append(phase_name)
+                        if len(phase_history) > 1:
+                            print(f"  [Step {step}] Phase transition: {phase_history[-2]} -> {phase_name}", flush=True)
+            except Exception as e:
+                print(f"  [Step {step}] Solver error: {e}", flush=True)
                 action = np.zeros(2)
 
             traj.append((obs.copy(), action.copy()))
             obs, reward, done, info = env.step(action)
             step += 1
+
+            # Print progress every 10 steps
+            if step % 10 == 0:
+                print(f"  [Step {step}] pos_err={info.get('pos_err', 0):.3f}", flush=True)
 
             # --- DEBUG: track best distance / heading so far ---
             pos_err = info.get("pos_err", None)
@@ -154,12 +168,14 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
         final_yaw_err = float(abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi))
 
         # Detailed debug line for this attempt
+        phase_str = " -> ".join(phase_history) if phase_history else "N/A"
         print(
             f"[DETAIL] Attempt {attempt_count}: term={term}, steps={step}, "
             f"final_pos_err={final_pos_err:.3f}, final_yaw_err={final_yaw_err:.3f}, "
             f"best_pos_err={best_pos_err:.3f} at step {best_step}, "
             f"best_yaw_err={best_yaw_err:.3f}"
         )
+        print(f"  Phases: {phase_str}")
 
 
         save_data = {

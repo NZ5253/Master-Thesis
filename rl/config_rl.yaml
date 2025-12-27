@@ -1,6 +1,0 @@
-agent:
-  hidden: [128,128]
-train:
-  episodes: 200
-  max_steps: 200
-  out_dir: data/rl_runs

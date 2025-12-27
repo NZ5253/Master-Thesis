@@ -1,7 +1,8 @@
 # mpc/teb_mpc.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Dict, Any, Optional, Literal, Tuple
+from enum import Enum
 import os
 import numpy as np
 import yaml
@@ -12,6 +13,14 @@ except Exception:
     ca = None
 
 ProfileType = Literal["parallel", "perpendicular"]
+
+
+class ParkingPhase(Enum):
+    """Parking maneuver phases for smooth execution"""
+    APPROACH = "approach"      # Initial positioning phase
+    ENTRY = "entry"           # Main parking maneuver with reversing
+    FINAL_ALIGN = "final"     # Fine alignment to goal pose
+    COMPLETED = "completed"   # Successfully parked
 
 
 @dataclass
@@ -43,6 +52,7 @@ class MPCSolution:
     controls: np.ndarray
     success: bool
     info: Dict[str, Any]
+    phase: Optional[ParkingPhase] = None
 
 
 class TEBMPC:
@@ -116,25 +126,34 @@ class TEBMPC:
         # -------- Vehicle geometry (from env.vehicle only) --------
         self.length = float(self.vehicle_cfg["length"])
         self.width = float(self.vehicle_cfg["width"])
-        # Circle model radius (tuning, not config duplication)
-        self.circle_radius = self.width / 4.0
+        # Circle model radius
+        self.circle_radius = self.width / 2.0
 
-        # 4-circle footprint along vehicle spine
+        # 4-circle footprint: spine only for faster solving
         dist_ra_to_center = self.length / 2.0 - 0.05
         step = self.length / 8.0
+
         self.circle_offsets = [
-            dist_ra_to_center + 3 * step,  # front
-            dist_ra_to_center + 1 * step,
-            dist_ra_to_center - 1 * step,
-            dist_ra_to_center - 3 * step,  # rear
+            # Spine circles (x_offset, y_offset=0)
+            (dist_ra_to_center + 3 * step, 0.0),  # front center
+            (dist_ra_to_center + 1 * step, 0.0),  # mid-front center
+            (dist_ra_to_center - 1 * step, 0.0),  # mid-rear center
+            (dist_ra_to_center - 3 * step, 0.0),  # rear center
         ]
 
-        self.solver = None
+        self.solver_parallel = None
+        self.solver_perpendicular = None
         self._last_X, self._last_U = None, None
         self._current_profile = None
+        self._current_phase = ParkingPhase.APPROACH
+        self._cusp_detected = False
+        self._prev_v = 0.0
 
         if ca is not None:
-            self._build_solver()
+            print("[MPC] Building parallel parking solver...")
+            self.solver_parallel = self._build_solver(parking_type="parallel")
+            print("[MPC] Building perpendicular parking solver...")
+            self.solver_perpendicular = self._build_solver(parking_type="perpendicular")
 
     def _apply_profile(self, profile: str):
         if self._current_profile == profile:
@@ -171,7 +190,89 @@ class TEBMPC:
         print(f"  -> w_smooth_accel:   {self.w_smooth_accel}")
         print(f"  -> w_reverse_penalty:{self.w_reverse_penalty}")
 
-    def _build_solver(self) -> None:
+    def _detect_cusp(self, current_v: float) -> bool:
+        """Detect direction change (cusp point) in trajectory"""
+        # Cusp occurs when velocity changes sign (forward <-> reverse)
+        if abs(current_v) < 0.01:  # Near zero velocity
+            return False
+
+        if abs(self._prev_v) < 0.01:  # Was stationary
+            self._prev_v = current_v
+            return False
+
+        # Check for sign change
+        sign_change = (current_v * self._prev_v) < 0
+        self._prev_v = current_v
+
+        return sign_change
+
+    def _update_phase(self, state: VehicleState, goal: ParkingGoal, profile: str) -> ParkingPhase:
+        """Determine current parking phase based on state and goal"""
+        pos_err = np.hypot(goal.x - state.x, goal.y - state.y)
+        yaw_err = abs(((goal.yaw - state.yaw + np.pi) % (2 * np.pi)) - np.pi)
+
+        # Completion check
+        if pos_err < 0.03 and yaw_err < 0.05 and abs(state.v) < 0.05:
+            return ParkingPhase.COMPLETED
+
+        # Final alignment phase: close to goal, focus on precision
+        if pos_err < 0.15 and yaw_err < 0.2:
+            return ParkingPhase.FINAL_ALIGN
+
+        # Entry phase: performing main parking maneuver
+        # For parallel: when reversing or close to slot
+        # For perpendicular: when reversing into spot
+        if profile == "parallel":
+            # Check if we're alongside the bay (lateral distance small)
+            if abs(state.y - goal.y) < 0.8 or state.v < -0.05:  # Reversing
+                return ParkingPhase.ENTRY
+        else:  # perpendicular
+            if state.v < -0.05 or pos_err < 0.8:  # Reversing or close
+                return ParkingPhase.ENTRY
+
+        # Default: approach phase
+        return ParkingPhase.APPROACH
+
+    def _get_phase_weights(self, phase: ParkingPhase, base_profile: str) -> Dict[str, float]:
+        """Get phase-specific weight adjustments"""
+        weights = {}
+
+        if phase == ParkingPhase.APPROACH:
+            # Approach: smooth driving, weak goal pull
+            weights = {
+                'w_goal_xy_mult': 0.3,      # Weak goal tracking
+                'w_goal_theta_mult': 0.3,   # Weak yaw tracking
+                'w_smooth_mult': 2.0,       # Strong smoothing
+                'w_collision_mult': 1.5,    # Stronger collision avoidance
+            }
+        elif phase == ParkingPhase.ENTRY:
+            # Entry: main maneuver, balanced
+            weights = {
+                'w_goal_xy_mult': 1.0,      # Normal goal tracking
+                'w_goal_theta_mult': 1.0,   # Normal yaw tracking
+                'w_smooth_mult': 0.5,       # Weaker smoothing (allow decisive moves)
+                'w_collision_mult': 1.0,    # Normal collision avoidance
+            }
+        elif phase == ParkingPhase.FINAL_ALIGN:
+            # Final: precision alignment, very strong goal pull
+            weights = {
+                'w_goal_xy_mult': 3.0,      # Very strong goal tracking
+                'w_goal_theta_mult': 3.0,   # Very strong yaw tracking
+                'w_smooth_mult': 0.2,       # Minimal smoothing (precision over comfort)
+                'w_collision_mult': 0.8,    # Slightly weaker (allow final approach)
+            }
+        else:  # COMPLETED
+            weights = {
+                'w_goal_xy_mult': 1.0,
+                'w_goal_theta_mult': 1.0,
+                'w_smooth_mult': 1.0,
+                'w_collision_mult': 1.0,
+            }
+
+        return weights
+
+    def _build_solver(self, parking_type: str = "parallel"):
+        """Build solver for specific parking type to avoid runtime conditionals"""
         N, dt, L = self.N, self.dt, float(self.vehicle_cfg.get("wheelbase", 0.25))
 
         x, y, yaw, v = ca.SX.sym("x"), ca.SX.sym("y"), ca.SX.sym("yaw"), ca.SX.sym("v")
@@ -202,12 +303,48 @@ class TEBMPC:
             yaw_err = angle_wrap(st[2] - goal_yaw)
             gain = 8.0 if k == N - 1 else 1.0
 
-            # Goal Cost
-            obj += gain * (
+            # Build parking-type-specific cost
+            if parking_type == "parallel":
+                # ==== PARALLEL PARKING: Monotonic depth with proper alignment ====
+                # Strategy: Go deep monotonically, straighten throughout, modulate speed
+
+                # Lateral alignment (centering between neighbors along X)
+                lateral_err = st[0] - goal_x
+
+                # Depth into bay: strong penalty for coming back out
+                depth_penalty = ca.fmax(0, st[1] - goal_y)  # Penalty if above goal_y (backing out)
+                depth_reward = -(st[1] - goal_y)  # Reward for depth
+
+                # Position error for proximity calculation
+                pos_err = ca.sqrt((st[0] - goal_x) ** 2 + (st[1] - goal_y) ** 2)
+
+                # Speed modulation: slow down during steering and near goal
+                steer_magnitude = ca.fabs(u[0])  # Current steering angle magnitude
+                proximity_to_goal = ca.fmax(0, 1.0 - pos_err / 0.5)  # 0 to 1 as we approach (50cm range)
+
+                # Penalize high speed during steering (human-like: slow to steer)
+                speed_during_steering_penalty = steer_magnitude * ca.fabs(st[3])
+
+                # Penalize high speed when close to goal (precision parking)
+                speed_near_goal_penalty = proximity_to_goal * ca.fabs(st[3])
+
+                # Parallel parking cost: monotonic depth + continuous alignment + speed modulation
+                obj += gain * (
+                    self.w_goal_xy * 0.25 * lateral_err ** 2 +     # Lateral centering
+                    self.w_goal_xy * 4.0 * depth_penalty ** 2 +    # Strong penalty for backing out
+                    self.w_goal_xy * 0.03 * depth_reward +         # Small reward for depth
+                    self.w_goal_theta * 0.7 * yaw_err ** 2 +       # Moderate yaw alignment
+                    self.w_goal_v * st[3] ** 2 +                   # Stop near goal
+                    self.w_goal_xy * 0.3 * speed_during_steering_penalty ** 2 +  # Gentle slow during steering
+                    self.w_goal_xy * 0.5 * speed_near_goal_penalty ** 2          # Gentle slow near goal
+                )
+            else:  # perpendicular
+                # ==== PERPENDICULAR PARKING: Standard XY goal tracking ====
+                obj += gain * (
                     self.w_goal_xy * ((st[0] - goal_x) ** 2 + (st[1] - goal_y) ** 2) +
                     self.w_goal_theta * yaw_err ** 2 +
                     self.w_goal_v * st[3] ** 2
-            )
+                )
 
             # Control Cost
             obj += self.w_steer * u[0] ** 2 + self.w_accel * u[1] ** 2
@@ -219,23 +356,22 @@ class TEBMPC:
             if k > 0:
                 obj += self.w_smooth_steer * (u[0] - U[0, k - 1]) ** 2 + self.w_smooth_accel * (u[1] - U[1, k - 1]) ** 2
 
-            # --- UPDATED: 4-CIRCLE COLLISION CHECK ---
+            # --- 4-CIRCLE COLLISION CHECK with 2D rotation ---
             c_theta = ca.cos(st[2])
             s_theta = ca.sin(st[2])
 
-            # Loop over all 4 ego circles
-            for offset in self.circle_offsets:
-                # Calculate circle center
-                cx = st[0] + offset * c_theta
-                cy = st[1] + offset * s_theta
+            # Loop over all 4 ego circles (spine)
+            for offset_x, offset_y in self.circle_offsets:
+                # Rotate offset by vehicle yaw (2D rotation matrix)
+                cx = st[0] + offset_x * c_theta - offset_y * s_theta
+                cy = st[1] + offset_x * s_theta + offset_y * c_theta
 
                 # Check against all obstacles
                 for j in range(self.max_obstacles):
-                    dist_sq = (cx - obs_cx[j]) ** 2 + (cy - obs_cy[j]) ** 2 + 1e-6
-                    dist = ca.sqrt(dist_sq)
-                    pen = (obs_r[j] + self.circle_radius) - dist
-                    # Soft constraint
-                    obj += self.w_collision * 0.5 * (ca.fmax(0, pen)) ** 2
+                    dist = ca.sqrt((cx - obs_cx[j]) ** 2 + (cy - obs_cy[j]) ** 2 + 1e-9)
+                    penetration = (obs_r[j] + self.circle_radius) - dist
+                    # Soft constraint with squared penalty
+                    obj += self.w_collision * ca.fmax(0, penetration) ** 2
 
             # Boundary
             for val, limit, margin in [(st[0], self.x_min, 1), (st[0], self.x_max, -1),
@@ -251,15 +387,34 @@ class TEBMPC:
             g.append(X[:, k + 1] - ca.vertcat(x_next, y_next, yaw_next, v_next))
 
         nlp = {"x": ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1)), "f": obj, "g": ca.vertcat(*g), "p": P}
-        opts = {"ipopt": {"max_iter": 200, "print_level": 0, "tol": 1e-3, "warm_start_init_point": "yes"},
-                "print_time": 0}
-        self.solver = ca.nlpsol("solver", "ipopt", nlp, opts)
+        opts = {
+            "ipopt": {
+                "max_iter": 150,
+                "print_level": 0,
+                "tol": 1e-3,
+                "warm_start_init_point": "yes",
+                "mu_strategy": "adaptive"
+            },
+            "print_time": 0
+        }
+        solver = ca.nlpsol(f"solver_{parking_type}", "ipopt", nlp, opts)
+        return solver
 
     def solve(self, state: VehicleState, goal: ParkingGoal, obstacles: List[Obstacle],
               profile: str = "perpendicular") -> MPCSolution:
-        if self.solver is None: return MPCSolution(np.zeros((1, 4)), np.zeros((1, 2)), False, {})
+        # Select appropriate solver based on parking type
+        solver = self.solver_parallel if profile == "parallel" else self.solver_perpendicular
+        if solver is None:
+            return MPCSolution(np.zeros((1, 4)), np.zeros((1, 2)), False, {}, None)
 
+        # Apply base profile weights
         self._apply_profile(profile)
+
+        # Detect current phase
+        current_phase = self._update_phase(state, goal, profile)
+
+        # Detect cusp (direction change)
+        cusp_detected = self._detect_cusp(state.v)
 
         # Initial Guess
         x0 = np.array([state.x, state.y, state.yaw, state.v])
@@ -312,15 +467,19 @@ class TEBMPC:
         ubx = [np.inf] * 4 * (self.N + 1) + [0.52, 1.0] * self.N
 
         try:
-            res = self.solver(x0=ca.vertcat(X0.flatten(), U0.flatten()), lbx=lbx, ubx=ubx, lbg=0, ubg=0, p=P)
+            res = solver(x0=ca.vertcat(X0.flatten(), U0.flatten()), lbx=lbx, ubx=ubx, lbg=0, ubg=0, p=P)
             res_x = np.array(res["x"]).flatten()
             X_sol = res_x[:4 * (self.N + 1)].reshape(self.N + 1, 4)
             U_sol = res_x[4 * (self.N + 1):].reshape(self.N, 2)
             self._last_X, self._last_U = X_sol, U_sol
 
-            return MPCSolution(X_sol, U_sol, True, {"termination": "success"})
-        except Exception:
-            return MPCSolution(X0, U0, False, {})
+            return MPCSolution(X_sol, U_sol, True, {
+                "termination": "success",
+                "phase": current_phase.value,
+                "cusp_detected": cusp_detected
+            }, current_phase)
+        except Exception as e:
+            return MPCSolution(X0, U0, False, {"error": str(e)}, current_phase)
 
     def first_control(self, sol: MPCSolution) -> np.ndarray:
         return sol.controls[0] if len(sol.controls) > 0 else np.zeros(2)
