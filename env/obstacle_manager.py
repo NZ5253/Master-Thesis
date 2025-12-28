@@ -308,4 +308,3 @@ class ObstacleManager:
                 return True
 
         return False
-
