@@ -1,0 +1,564 @@
+[INFO] Output Directory: data/expert_parallel_hybrid
+[INFO] Debug Directory:  data/expert_parallel_hybrid_debug (Failures saved here)
+
+[INFO] Using HYBRID TEB+MPC controller (plan once, track)
+
+[MPC] Loading Default Weights:
+  -> Collision: 40.0
+  -> Reverse Penalty: 0.1
+
+[TEB] Using Fixed-dt MPC (dt = 0.100 s)
+[MPC] Building parallel parking solver...
+[MPC] Building perpendicular parking solver...
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Building TEB-enabled parallel solver...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+
+[MPC] Switching to Profile: PARALLEL
+  -> Parallel sub-weights:
+     lateral_weight: 0.25
+     yaw_weight: 0.9
+     proximity_exp_factor: 50.0
+  -> w_goal_xy:        400.0
+  -> w_goal_theta:     120.0
+  -> w_goal_v:         0.1
+  -> w_collision:      35.0
+  -> w_steer:          0.1
+  -> w_accel:          0.05
+  -> w_smooth_steer:   0.0015
+  -> w_smooth_accel:   0.003
+  -> w_slew_rate_steer:0.5
+  -> w_slew_rate_accel:0.2
+  -> w_reverse_penalty:0.12
+
+******************************************************************************
+This program contains Ipopt, a library for large-scale nonlinear optimization.
+ Ipopt is released as open source code under the Eclipse Public License (EPL).
+         For more information visit https://github.com/coin-or/Ipopt
+******************************************************************************
+
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 1: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 0 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 2: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 1 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+[INFO] Output Directory: data/expert_parallel_hybrid
+[INFO] Debug Directory:  data/expert_parallel_hybrid_debug (Failures saved here)
+
+[INFO] Using HYBRID TEB+MPC controller (plan once, track)
+
+[MPC] Loading Default Weights:
+  -> Collision: 40.0
+  -> Reverse Penalty: 0.1
+
+[TEB] Using Fixed-dt MPC (dt = 0.100 s)
+[MPC] Building parallel parking solver...
+[MPC] Building perpendicular parking solver...
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Building TEB-enabled parallel solver...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+
+[MPC] Switching to Profile: PARALLEL
+  -> Parallel sub-weights:
+     lateral_weight: 0.25
+     yaw_weight: 0.9
+     proximity_exp_factor: 50.0
+  -> w_goal_xy:        400.0
+  -> w_goal_theta:     120.0
+  -> w_goal_v:         0.1
+  -> w_collision:      35.0
+  -> w_steer:          0.1
+  -> w_accel:          0.05
+  -> w_smooth_steer:   0.0015
+  -> w_smooth_accel:   0.003
+  -> w_slew_rate_steer:0.5
+  -> w_slew_rate_accel:0.2
+  -> w_reverse_penalty:0.12
+
+******************************************************************************
+This program contains Ipopt, a library for large-scale nonlinear optimization.
+ Ipopt is released as open source code under the Eclipse Public License (EPL).
+         For more information visit https://github.com/coin-or/Ipopt
+******************************************************************************
+
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 1: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 2 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 2: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 3 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 3: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 4 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 4: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 5 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 5: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 6 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 6: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 7 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 7: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 8 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 8: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 9 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 9: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 10 (Steps: 56)
+
+[HYBRID CONTROLLER] Planning reference trajectory...
+[TEB PLANNER] Planning trajectory: horizon=80, profile=parallel
+[TEB PLANNER] Config: N=80, w_time=0.0, dt=[0.08, 0.25]
+[TEB PLANNER] Goal weights: xy=600.0, theta=180.0
+[TEB PLANNER] Goal reached at step 23, truncating to 28 steps
+[TEB PLANNER] ✓ Planning succeeded:
+  Steps: 28
+  Duration: 6.99s
+  Avg dt: 0.250s
+  dt range: [0.241, 0.250]
+  Committed maneuvers: 14
+    1. straight for 0.25s (1 steps)
+    2. full left for 0.75s (3 steps)
+    3. left for 0.25s (1 steps)
+    4. full right for 1.75s (7 steps)
+    5. full left for 0.25s (1 steps)
+    6. left for 0.25s (1 steps)
+    7. straight for 0.75s (3 steps)
+    8. right for 0.25s (1 steps)
+    9. full right for 0.25s (1 steps)
+    10. full left for 0.25s (1 steps)
+    11. slight adjustment for 0.25s (1 steps)
+    12. right for 0.25s (1 steps)
+    13. full right for 0.25s (1 steps)
+    14. straight for 1.24s (5 steps)
+[TEB PLANNER] Restored: TEB=False, horizon=80
+[HYBRID CONTROLLER] ✓ Planned 28 steps (6.99s)
+  [Step 10] pos_err=0.790
+  [Step 20] pos_err=0.149
+[HYBRID CONTROLLER] Switching to final convergence (pos_err=0.084m)
+  [Step 29] Mode transition: tracking -> final_convergence
+  [Step 30] pos_err=0.074
+  [Step 40] pos_err=0.118
+  [Step 50] pos_err=0.057
+[DETAIL] Attempt 10: term=success, steps=56, final_pos_err=0.032, final_yaw_err=0.034, best_pos_err=0.026 at step 53, best_yaw_err=0.075
+  Phases: tracking -> final_convergence
+[SUCCESS] Saved Episode 11 (Steps: 56)

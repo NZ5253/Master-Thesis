@@ -9,6 +9,7 @@ from typing import List
 
 from env.parking_env import ParkingEnv
 from mpc.teb_mpc import TEBMPC, VehicleState, ParkingGoal, Obstacle
+from mpc.hybrid_controller import HybridController
 
 
 def _env_obstacles_to_teb(env: ParkingEnv) -> List[Obstacle]:
@@ -74,7 +75,8 @@ def _next_episode_index(out_dir: str) -> int:
     return max_idx + 1
 
 
-def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None) -> None:
+def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None,
+             use_hybrid: bool = False) -> None:
     # 1. Config Merge
     if "scenarios" not in cfg_full or scenario not in cfg_full["scenarios"]:
         print(f"[ERROR] Scenario '{scenario}' not found")
@@ -100,7 +102,18 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
 
     # --- IMPORTANT: env + MPC share the SAME env cfg now ---
     env = ParkingEnv(cfg_env)
-    teb = TEBMPC(max_obstacles=25, env_cfg=cfg_env)
+
+    # Choose controller based on mode
+    if use_hybrid:
+        print(f"[INFO] Using HYBRID TEB+MPC controller (plan once, track)")
+        controller = HybridController(
+            config_path="mpc/config_mpc.yaml",
+            env_cfg=cfg_env,
+            dt=cfg_env["dt"]
+        )
+    else:
+        print(f"[INFO] Using BASELINE MPC controller (re-plan every step)")
+        teb = TEBMPC(max_obstacles=25, env_cfg=cfg_env)
 
     start_idx = _next_episode_index(final_out_dir)
     success_count = 0
@@ -111,6 +124,10 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
         obs = env.reset(randomize=True)
         episode_goal = env.goal.copy()
         episode_obstacles = [o.copy() for o in env.obstacles.obstacles]
+
+        # Reset hybrid controller for new episode
+        if use_hybrid:
+            controller.reset()
 
         traj = []
         done = False
@@ -128,16 +145,29 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
             obstacles = _env_obstacles_to_teb(env)
 
             try:
-                sol = teb.solve(state, goal, obstacles, profile=scenario)
-                action = np.array([float(sol.controls[0, 0]), float(sol.controls[0, 1])])
+                if use_hybrid:
+                    # Hybrid controller returns control directly
+                    action = controller.get_control(state, goal, obstacles, profile=scenario)
 
-                # Track phase transitions
-                if sol.phase is not None:
-                    phase_name = sol.phase.value
-                    if len(phase_history) == 0 or phase_history[-1] != phase_name:
-                        phase_history.append(phase_name)
+                    # Track mode transitions
+                    ctrl_info = controller.get_info()
+                    mode_name = ctrl_info.get("mode", "unknown")
+                    if len(phase_history) == 0 or phase_history[-1] != mode_name:
+                        phase_history.append(mode_name)
                         if len(phase_history) > 1:
-                            print(f"  [Step {step}] Phase transition: {phase_history[-2]} -> {phase_name}", flush=True)
+                            print(f"  [Step {step}] Mode transition: {phase_history[-2]} -> {mode_name}", flush=True)
+                else:
+                    # Baseline MPC
+                    sol = teb.solve(state, goal, obstacles, profile=scenario)
+                    action = np.array([float(sol.controls[0, 0]), float(sol.controls[0, 1])])
+
+                    # Track phase transitions
+                    if sol.phase is not None:
+                        phase_name = sol.phase.value
+                        if len(phase_history) == 0 or phase_history[-1] != phase_name:
+                            phase_history.append(phase_name)
+                            if len(phase_history) > 1:
+                                print(f"  [Step {step}] Phase transition: {phase_history[-2]} -> {phase_name}", flush=True)
             except Exception as e:
                 print(f"  [Step {step}] Solver error: {e}", flush=True)
                 action = np.zeros(2)
@@ -207,9 +237,11 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", "-n", type=int, default=50)
     parser.add_argument("--scenario", type=str, default="perpendicular")
     parser.add_argument("--out-dir", type=str, default=None)
+    parser.add_argument("--hybrid", action="store_true",
+                       help="Use hybrid TEB+MPC controller (plan once, track) instead of baseline MPC")
     args = parser.parse_args()
 
     with open("config_env.yaml", "r") as f:
         cfg_full = yaml.safe_load(f)
 
-    generate(cfg_full, args.scenario, args.episodes, args.out_dir)
+    generate(cfg_full, args.scenario, args.episodes, args.out_dir, use_hybrid=args.hybrid)

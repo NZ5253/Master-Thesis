@@ -28,32 +28,6 @@ mpc:
   # Default reverse penalty (profile can override)
   w_reverse_penalty: 0.1
 
-  # ============================================================================
-  # TIME-ELASTIC BAND (TEB) CONFIGURATION
-  # ============================================================================
-  # TEB makes time intervals between waypoints into optimization variables,
-  # allowing the trajectory to speed up in safe areas and slow down near obstacles.
-  # Set enable_teb: false to use fixed-dt MPC (baseline)
-  # ============================================================================
-  teb:
-    enable: false             # DISABLED - Fixed-dt MPC has fewer oscillations (see TEB_OSCILLATION_ANALYSIS.md)
-
-    # Time interval bounds - Original baseline settings
-    dt_min: 0.08              # Minimum time step (80ms)
-    dt_max: 0.12              # Maximum time step (120ms)
-    dt_init: 0.10             # Initial guess (100ms)
-
-    # Temporal cost weights - Conservative baseline
-    w_time: 0.0               # NO time pressure
-    w_dt_smooth: 0.0          # DISABLED - let optimizer choose dt freely
-    w_dt_obstacle: 0.0        # DISABLED
-    w_dt_precision: 0.0       # DISABLED - baseline without precision penalty
-    w_velocity_dt_coupling: 0.0  # DISABLED
-
-    # Constraints
-    max_total_time: 12.0      # Maximum total trajectory time (seconds)
-    temporal_smoothness_bound: 0.15  # Max dt change between consecutive steps
-
   # Scenario-specific profile overrides
   profiles:
     parallel:
@@ -75,21 +49,14 @@ mpc:
       # ============================================================================
 
       # --- Core MPC Weights ---
-      w_goal_xy: 400.0           # Base goal attraction (multiplied by lateral/depth weights)
-      w_goal_theta: 120.0        # Yaw alignment
-      w_goal_v: 0.1              # Velocity cost
-      w_steer: 0.1               # Steering effort
-      w_accel: 0.05              # Acceleration effort
-      w_smooth_steer: 0.0015     # Steering smoothness (within horizon)
-      w_smooth_accel: 0.003      # Acceleration smoothness (within horizon)
-      w_slew_rate_steer: 0.5     # NEW: Commitment penalty - VERY WEAK (stronger causes collisions)
-      w_slew_rate_accel: 0.2     # NEW: Commitment penalty - VERY WEAK
+      w_goal_xy: 400.0
+      w_goal_theta: 120.0
+      w_goal_v: 0.1
+      w_steer: 0.1
+      w_accel: 0.05
+      w_smooth_steer: 0.0015     # Very weak - allow decisive maneuvers
+      w_smooth_accel: 0.003
       w_reverse_penalty: 0.12
-      w_gear_change: 0.0         # DISABLED
-      w_braking_zone: 0.0        # DISABLED
-      w_terminal_velocity: 0.0   # DISABLED
-      w_steering_precision: 0.0  # DISABLED
-      w_monotonic_final: 0.0     # DISABLED
       w_collision: 35.0
 
       # --- Parallel Parking Cost Function Weights ---
@@ -102,7 +69,7 @@ mpc:
       # The exponential creates aggressive pull only in final centimeters
       depth_reward_linear: 0.03       # Base linear coefficient
       depth_reward_quadratic: 0.30    # Quadratic boost (activates near goal)
-      proximity_exp_factor: 50.0      # FIX #2: Creates tighter reward zone (increased from 20.0)
+      proximity_exp_factor: 20.0      # e^(-20*err²): 1.0@0cm, 0.37@2cm, 0.02@5cm
 
       # --- Phase Detection Thresholds ---
       # FINAL_ALIGN phase: depth < threshold AND yaw < threshold
