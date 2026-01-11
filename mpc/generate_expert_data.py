@@ -9,57 +9,30 @@ from typing import List
 
 from env.parking_env import ParkingEnv
 from mpc.teb_mpc import TEBMPC, VehicleState, ParkingGoal, Obstacle
-from mpc.hybrid_controller import HybridController
+from mpc.staged_controller import StagedAtoBtoCController
 
 
 def _env_obstacles_to_teb(env: ParkingEnv) -> List[Obstacle]:
-    obs_list: List[Obstacle] = []
+    """Convert env obstacles -> MPC/TEB rectangle obstacles.
 
+    - Uses full rectangles (no pins), so parked cars are fully covered *without gaps*.
+    - Skips curbs (env doesn't treat them as collisions).
+    - Skips world walls (MPC boundary term handles them).
+    """
+    obs_list: List[Obstacle] = []
     for o in env.obstacles.obstacles:
-        cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
-        kind = o.get("kind", None)
+        kind = o.get("kind", "")
+        cx, cy = float(o["x"]), float(o["y"])
+        w, h = float(o["w"]), float(o["h"])
         theta = float(o.get("theta", 0.0))
 
-        # --- SOFT CURB: treat as one long thin obstacle ---
         if kind == "curb":
-            # Use half-width / half-height; teb_mpc.py will recognise it
-            # as "long & thin" and assign a softer radius.
-            obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
+            continue
+        if max(w, h) > 1.5:  # big world walls
             continue
 
-        # Thin -> likely wall or narrow bar: single Obstacle
-        is_thin = (w < 0.1) or (h < 0.1)
-        if is_thin:
-            obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
-            continue
-
-        # "Fat" rectangles (cars): split into 4 *rotated* corner pins
-        if w > 0.2 and h > 0.2:
-            pin_radius = 0.05
-            half_w = w / 2.0
-            half_h = h / 2.0
-
-            # corners in local (centered) frame
-            corners_local = np.array([
-                [ half_w,  half_h],
-                [ half_w, -half_h],
-                [-half_w, -half_h],
-                [-half_w,  half_h],
-            ])
-
-            # rotate by theta and shift to world
-            c, s = np.cos(theta), np.sin(theta)
-            R = np.array([[c, -s], [s, c]])
-            corners_world = corners_local @ R.T + np.array([cx, cy])
-
-            for px, py in corners_world:
-                obs_list.append(
-                    Obstacle(cx=float(px), cy=float(py),
-                             hx=pin_radius, hy=pin_radius)
-                )
-
+        obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0, theta=theta))
     return obs_list
-
 
 
 def _next_episode_index(out_dir: str) -> int:
@@ -73,6 +46,48 @@ def _next_episode_index(out_dir: str) -> int:
             except ValueError:
                 continue
     return max_idx + 1
+
+
+def _compute_pose_errors(env: ParkingEnv, state_vec: np.ndarray) -> dict:
+    """Compute pose error metrics consistent with env success logic.
+
+    - Parallel: car-center error to slot center (along/lateral + euclidean)
+    - Perpendicular: rear-axle error to rear-axle goal
+    """
+    x_ra, y_ra, yaw, v = [float(x) for x in state_vec]
+    gx, gy, gyaw = [float(x) for x in env.goal]
+
+    yaw_err = float(abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi))
+
+    bay_cfg = (env.parking_cfg.get("bay", {}) or {})
+    bay_yaw = float(bay_cfg.get("yaw", 0.0))
+
+    # vehicle geometry (must match env + obstacle geometry)
+    L = float((env.vehicle_params or {}).get("length", 0.36))
+    dist_to_center = L / 2.0 - 0.05
+
+    if abs(bay_yaw) < 0.3:
+        # PARALLEL: evaluate using car center vs slot center
+        cx = x_ra + dist_to_center * float(np.cos(yaw))
+        cy = y_ra + dist_to_center * float(np.sin(yaw))
+
+        slot = getattr(env, "bay_center", np.array([0.0, float(bay_cfg.get("center_y", 0.13)), bay_yaw], dtype=float))
+        slot_cx = float(slot[0])
+        slot_cy = float(slot[1])
+
+        along_err = abs(cx - slot_cx)
+        lateral_err = abs(cy - slot_cy)
+        pos_err = float(np.hypot(cx - slot_cx, cy - slot_cy))
+        return {
+            "pos_err": pos_err,
+            "yaw_err": yaw_err,
+            "along_err": float(along_err),
+            "lateral_err": float(lateral_err),
+        }
+
+    # PERPENDICULAR (or any non-parallel): rear-axle error to goal
+    pos_err = float(np.hypot(gx - x_ra, gy - y_ra))
+    return {"pos_err": pos_err, "yaw_err": yaw_err}
 
 
 def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None,
@@ -106,11 +121,17 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
     # Choose controller based on mode
     if use_hybrid:
         print(f"[INFO] Using HYBRID TEB+MPC controller (plan once, track)")
-        controller = HybridController(
-            config_path="mpc/config_mpc.yaml",
+        print(
+            f"[INFO] Using STAGED controller: A->B (receding MPC) -> WAIT -> B->C ({'HYBRID' if use_hybrid else 'baseline'})")
+        controller = StagedAtoBtoCController(
             env_cfg=cfg_env,
-            dt=cfg_env["dt"]
+            dt=cfg_env["dt"],
+            config_path="mpc/config_mpc.yaml",
+            max_obstacles=25,
+            use_hybrid_for_parking=use_hybrid,
+            wait_time_s=0.5,
         )
+
     else:
         print(f"[INFO] Using BASELINE MPC controller (re-plan every step)")
         teb = TEBMPC(max_obstacles=25, env_cfg=cfg_env)
@@ -122,12 +143,13 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
     while success_count < n_episodes:
         attempt_count += 1
         obs = env.reset(randomize=True)
+        goal_C = ParkingGoal(x=env.goal[0], y=env.goal[1], yaw=env.goal[2])
+
+        if use_hybrid:
+            controller.reset_episode(goal_C, profile=scenario)
+
         episode_goal = env.goal.copy()
         episode_obstacles = [o.copy() for o in env.obstacles.obstacles]
-
-        # Reset hybrid controller for new episode
-        if use_hybrid:
-            controller.reset()
 
         traj = []
         done = False
@@ -141,61 +163,47 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
 
         while not done:
             state = VehicleState(x=env.state[0], y=env.state[1], yaw=env.state[2], v=env.state[3])
-            goal = ParkingGoal(x=env.goal[0], y=env.goal[1], yaw=env.goal[2])
+            goal_C = ParkingGoal(x=env.goal[0], y=env.goal[1], yaw=env.goal[2])
             obstacles = _env_obstacles_to_teb(env)
 
-            try:
-                if use_hybrid:
-                    # Hybrid controller returns control directly
-                    action = controller.get_control(state, goal, obstacles, profile=scenario)
+            if use_hybrid:
+                action = controller.get_control(state, goal_C, obstacles, profile=scenario)
+            else:
+                sol = teb.solve(state, goal_C, obstacles, profile=scenario)
+                action = np.array([float(sol.controls[0, 0]), float(sol.controls[0, 1])], dtype=float)
 
-                    # Track mode transitions
-                    ctrl_info = controller.get_info()
-                    mode_name = ctrl_info.get("mode", "unknown")
-                    if len(phase_history) == 0 or phase_history[-1] != mode_name:
-                        phase_history.append(mode_name)
-                        if len(phase_history) > 1:
-                            print(f"  [Step {step}] Mode transition: {phase_history[-2]} -> {mode_name}", flush=True)
-                else:
-                    # Baseline MPC
-                    sol = teb.solve(state, goal, obstacles, profile=scenario)
-                    action = np.array([float(sol.controls[0, 0]), float(sol.controls[0, 1])])
-
-                    # Track phase transitions
-                    if sol.phase is not None:
-                        phase_name = sol.phase.value
-                        if len(phase_history) == 0 or phase_history[-1] != phase_name:
-                            phase_history.append(phase_name)
-                            if len(phase_history) > 1:
-                                print(f"  [Step {step}] Phase transition: {phase_history[-2]} -> {phase_name}", flush=True)
-            except Exception as e:
-                print(f"  [Step {step}] Solver error: {e}", flush=True)
-                action = np.zeros(2)
+            if use_hybrid:
+                ctrl_info = controller.get_info()
+                mode_name = ctrl_info.get("mode", "unknown")
+                if len(phase_history) == 0 or phase_history[-1] != mode_name:
+                    phase_history.append(mode_name)
+                    if len(phase_history) > 1:
+                        print(f"  [Step {step}] Mode transition: {phase_history[-2]} -> {mode_name}", flush=True)
 
             traj.append((obs.copy(), action.copy()))
             obs, reward, done, info = env.step(action)
             step += 1
 
+            # Compute consistent metrics
+            metrics = _compute_pose_errors(env, env.state)
+
             # Print progress every 10 steps
             if step % 10 == 0:
-                print(f"  [Step {step}] pos_err={info.get('pos_err', 0):.3f}", flush=True)
+                print(f"  [Step {step}] pos_err={metrics['pos_err']:.3f}", flush=True)
 
-            # --- DEBUG: track best distance / heading so far ---
-            pos_err = info.get("pos_err", None)
-            yaw_err = info.get("yaw_err", None)
-            if pos_err is not None:
-                if pos_err < best_pos_err:
-                    best_pos_err = float(pos_err)
-                    best_yaw_err = float(abs(yaw_err)) if yaw_err is not None else best_yaw_err
-                    best_step = step
+            # --- DEBUG: track best distance / heading so far (consistent with env success) ---
+            pos_err = float(metrics.get('pos_err', 0.0))
+            yaw_err = float(metrics.get('yaw_err', 0.0))
+            if pos_err < best_pos_err:
+                best_pos_err = pos_err
+                best_yaw_err = abs(yaw_err)
+                best_step = step
 
         term = info.get("termination", "unknown")
-        # --- FINAL pose errors (using env state & goal) ---
-        x, y, yaw, v = env.state
-        gx, gy, gyaw = env.goal
-
-        final_pos_err = float(np.hypot(gx - x, gy - y))
-        final_yaw_err = float(abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi))
+        # --- FINAL pose errors (consistent with env success) ---
+        final_metrics = _compute_pose_errors(env, env.state)
+        final_pos_err = float(final_metrics.get('pos_err', 0.0))
+        final_yaw_err = float(final_metrics.get('yaw_err', 0.0))
 
         # Detailed debug line for this attempt
         phase_str = " -> ".join(phase_history) if phase_history else "N/A"
@@ -206,7 +214,6 @@ def generate(cfg_full: dict, scenario: str, n_episodes: int, out_dir: str = None
             f"best_yaw_err={best_yaw_err:.3f}"
         )
         print(f"  Phases: {phase_str}")
-
 
         save_data = {
             "traj": traj,

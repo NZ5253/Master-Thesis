@@ -28,6 +28,11 @@ mpc:
   # Default reverse penalty (profile can override)
   w_reverse_penalty: 0.1
 
+  # Circle–rectangle collision geometry (used by teb_mpc.py)
+  obs_inflate: 0.01          # inflate obstacle rectangles minimally - allow deeper entry
+  collision_margin: 0.00     # extra clearance for ego circles (meters). start at 0
+
+
   # ============================================================================
   # TIME-ELASTIC BAND (TEB) CONFIGURATION
   # ============================================================================
@@ -56,6 +61,25 @@ mpc:
 
   # Scenario-specific profile overrides
   profiles:
+
+    approach:
+      # Approach A->B: simple, smooth, no fear of reversing
+      w_goal_xy: 250.0
+      w_goal_theta: 60.0
+      w_goal_v: 0.05
+
+      w_steer: 0.08
+      w_accel: 0.03
+      w_smooth_steer: 0.002
+      w_smooth_accel: 0.004
+
+      w_slew_rate_steer: 0.2
+      w_slew_rate_accel: 0.1
+
+      w_collision: 25.0
+      w_reverse_penalty: 0.0
+      w_gear_change: 0.0
+
     parallel:
       # ============================================================================
       # COLLISION-SAFE EXPONENTIAL DEPTH REWARD CONFIGURATION
@@ -90,7 +114,7 @@ mpc:
       w_terminal_velocity: 0.0   # DISABLED
       w_steering_precision: 0.0  # DISABLED
       w_monotonic_final: 0.0     # DISABLED
-      w_collision: 35.0
+      w_collision: 33.0          # Slightly lower to be braver (was 35.0)
 
       # --- Parallel Parking Cost Function Weights ---
       lateral_weight: 0.25        # Lateral centering (X-axis alignment)
@@ -99,10 +123,10 @@ mpc:
 
       # --- Enhanced Depth Reward ---
       # reward = -linear*err + -quadratic*err²*exp(-factor*err²)
-      # The exponential creates aggressive pull only in final centimeters
-      depth_reward_linear: 0.03       # Base linear coefficient
-      depth_reward_quadratic: 0.30    # Quadratic boost (activates near goal)
-      proximity_exp_factor: 50.0      # FIX #2: Creates tighter reward zone (increased from 20.0)
+      # BRAVE CONFIGURATION: Strong depth pull for deeper parking with steering corrections
+      depth_reward_linear: 0.07       # INCREASED for constant depth pull
+      depth_reward_quadratic: 0.80    # INCREASED for strong final approach
+      proximity_exp_factor: 35.0      # BROADER activation for earlier depth commitment
 
       # --- Phase Detection Thresholds ---
       # FINAL_ALIGN phase: depth < threshold AND yaw < threshold

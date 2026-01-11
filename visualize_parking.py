@@ -42,10 +42,10 @@ def draw_car(ax, state, vehicle_cfg=None):
 
     # Rectangle corners in local center frame
     corners = np.array([
-        [length / 2,  width / 2],
+        [length / 2, width / 2],
         [length / 2, -width / 2],
         [-length / 2, -width / 2],
-        [-length / 2,  width / 2],
+        [-length / 2, width / 2],
     ])
     c, s = np.cos(yaw), np.sin(yaw)
     R = np.array([[c, -s], [s, c]])
@@ -65,29 +65,25 @@ def draw_car(ax, state, vehicle_cfg=None):
 def draw_ego_circles(ax, state, vehicle_cfg):
     """
     Draw 4 internal circles (green) that approximate the car body.
-
-    All 4 circles are placed along the vehicle's centerline (longitudinal axis),
-    matching how MPC/TEB typically models the robot footprint.
+    Updated to match TEBMPC logic (step = length/8).
     """
     x_rear, y_rear, yaw = state[0], state[1], state[2]
     length, width = _get_vehicle_dims(vehicle_cfg)
 
-    # Circle radius: cover lateral width of car
-    radius = width / 2.0
-
     # Rear axle → geometric center (must match env / collision model)
-    center_offset = length / 2.0 - 0.05
+    dist_ra_to_center = length / 2.0 - 0.05
 
-    # Place 4 circles around the geometric center along the spine.
-    # We keep them inside the rectangle, padded slightly for safety.
-    step = length / 6.0  # spacing between circles
+    # Match teb_mpc.py:
+    # Use 4 spine circles, enlarged just enough so the union covers the rectangle corners.
+    step = length / 8.0
+    radius = float(np.hypot(width / 2.0, step))
 
-    # offsets measured from rear axle along the car axis
+    # Offsets from rear axle along the car axis (matching teb_mpc.py)
     offsets = [
-        center_offset - 1.5 * step,  # rear-ish
-        center_offset - 0.5 * step,
-        center_offset + 0.5 * step,
-        center_offset + 1.5 * step,  # front-ish
+        dist_ra_to_center + 3 * step,  # front center
+        dist_ra_to_center + 1 * step,  # mid-front center
+        dist_ra_to_center - 1 * step,  # mid-rear center
+        dist_ra_to_center - 3 * step,  # rear center
     ]
 
     c_theta = np.cos(yaw)
@@ -139,13 +135,12 @@ def draw_obstacles(ax, env_or_obstacles):
             alpha = 0.8
             zorder = 5
 
-
         # corners in local frame (centered)
         corners = np.array([
-            [w / 2,  h / 2],
+            [w / 2, h / 2],
             [w / 2, -h / 2],
             [-w / 2, -h / 2],
-            [-w / 2,  h / 2],
+            [-w / 2, h / 2],
         ])
 
         c, s = np.cos(theta), np.sin(theta)
@@ -164,11 +159,6 @@ def draw_obstacles(ax, env_or_obstacles):
 def draw_goal(ax, env_or_goal):
     """
     Draw the desired CAR CENTER as a red X.
-
-    - If env_or_goal is a ParkingEnv, we take env.goal (rear axle) and
-      env.vehicle_params.length to compute the car center.
-    - If env_or_goal is a (gx, gy, gyaw) array/tuple, we assume that is
-      the REAR-AXLE goal and use a default length=0.36 to compute center.
     """
     # --- get rear-axle goal pose + vehicle length ---
     if hasattr(env_or_goal, "goal"):
@@ -188,78 +178,63 @@ def draw_goal(ax, env_or_goal):
     # Draw the CAR CENTER goal
     ax.plot(cx, cy, "rx", markersize=10, markeredgewidth=2, zorder=10)
 
+
 # ============================================================
 #  TEB obstacle conversion & debugging drawing
 # ============================================================
 
 def _env_obstacles_to_teb(env: ParkingEnv):
     """
-    Convert env.obstacles -> list[Obstacle] for TEB/MPC.
-    - Soft curb: single long thin obstacle (guidance, not hard wall)
-    - Thin walls: single big Obstacle
-    - Fat neighbour cars: 4 small 'corner pins' at ROTATED corners
+    Convert env obstacles -> rectangle obstacles for MPC/TEB visualization.
+    Matches the logic in generate_expert_data.py
     """
     obs_list = []
-
     for o in env.obstacles.obstacles:
-        cx, cy, w, h = o["x"], o["y"], o["w"], o["h"]
-        kind = o.get("kind", None)
+        kind = o.get("kind", "")
+        cx, cy = float(o["x"]), float(o["y"])
+        w, h = float(o["w"]), float(o["h"])
         theta = float(o.get("theta", 0.0))
 
-        # Soft curb
+        # Skip curbs (env doesn't treat them as hard collisions)
         if kind == "curb":
-            obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
+            continue
+        # Skip world walls (handled by boundary constraints)
+        if max(w, h) > 1.5:
             continue
 
-        # Thin → likely wall or narrow bar
-        is_thin = (w < 0.1) or (h < 0.1)
-        if is_thin:
-            obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0))
-            continue
-
-        # "Fat" rectangles (cars): 4 rotated corner pins
-        if w > 0.2 and h > 0.2:
-            pin_radius = 0.05  # 5 cm
-            half_w = w / 2.0
-            half_h = h / 2.0
-
-            corners_local = np.array([
-                [ half_w,  half_h],
-                [ half_w, -half_h],
-                [-half_w, -half_h],
-                [-half_w,  half_h],
-            ])
-
-            c, s = np.cos(theta), np.sin(theta)
-            R = np.array([[c, -s], [s, c]])
-            corners_world = corners_local @ R.T + np.array([cx, cy])
-
-            for px, py in corners_world:
-                obs_list.append(
-                    Obstacle(cx=float(px), cy=float(py),
-                             hx=pin_radius, hy=pin_radius)
-                )
+        # Pass full rectangle parameters
+        obs_list.append(Obstacle(cx=cx, cy=cy, hx=w / 2.0, hy=h / 2.0, theta=theta))
 
     return obs_list
 
 
-
 def draw_teb_obstacles(ax, env):
     """
-    Draws the derived TEB obstacles as red circles.
-    Useful for debugging that TEB "sees" neighbour cars at the right spots.
+    Draw MPC/TEB obstacles (rectangles) as red outlines.
+    This shows exactly what the SDF collision checker sees.
     """
     teb_obstacles = _env_obstacles_to_teb(env)
     for o in teb_obstacles:
-        # base radius choice for visualization only
-        radius = (o.hx + o.hy) / 2.0
-        if max(o.hx, o.hy) > 1.0:
-            radius = 0.30  # walls
-        else:
-            radius = 0.07  # pins / cars
+        # Get rotation matrix
+        c, s = np.cos(o.theta), np.sin(o.theta)
+        R = np.array([[c, -s], [s, c]])
 
-        circle = Circle((o.cx, o.cy), radius, color='red', alpha=0.4, zorder=20)
-        ax.add_patch(circle)
+        # Local corners from half-extents
+        corners_local = np.array([
+            [o.hx, o.hy],
+            [o.hx, -o.hy],
+            [-o.hx, -o.hy],
+            [-o.hx, o.hy]
+        ])
+
+        # Transform to world
+        corners_world = (corners_local @ R.T) + np.array([o.cx, o.cy])
+
+        # Draw red outline
+        poly = Polygon(corners_world, closed=True,
+                       facecolor='red', alpha=0.25,
+                       edgecolor='red', lw=1.5, zorder=20)
+        ax.add_patch(poly)
         ax.plot(o.cx, o.cy, 'k.', markersize=2, zorder=21)
 
 
@@ -315,6 +290,7 @@ def run_mpc_episode(full_cfg, scenario_name="perpendicular"):
         draw_goal(ax, env)
         draw_car(ax, env.state, vehicle_cfg=vehicle_cfg)
         draw_ego_circles(ax, env.state, vehicle_cfg)
+        draw_teb_obstacles(ax, env)  # Added to visualize MPC obstacles live
 
         ax.set_xlim(-2.2, 2.2)
         ax.set_ylim(-2.2, 2.2)
@@ -371,7 +347,7 @@ def visualize_episode_from_expert(pkl_path: str, cfg_full: dict, scenario_name: 
         # 1. Real obstacles (blue rectangles)
         draw_obstacles(ax, env)
 
-        # 2. TEB safety zones (red circles)
+        # 2. TEB safety zones (red outlines)
         draw_teb_obstacles(ax, env)
 
         # 3. Goal
@@ -379,7 +355,7 @@ def visualize_episode_from_expert(pkl_path: str, cfg_full: dict, scenario_name: 
 
         # 4. Trajectory so far
         if k > 0:
-            ax.plot(states[:k+1, 0], states[:k+1, 1], "b-", lw=2, alpha=0.6)
+            ax.plot(states[:k + 1, 0], states[:k + 1, 1], "b-", lw=2, alpha=0.6)
 
         # 5. Ego rectangle + 4 circles
         draw_car(ax, state, vehicle_cfg=vehicle_cfg)
@@ -388,7 +364,7 @@ def visualize_episode_from_expert(pkl_path: str, cfg_full: dict, scenario_name: 
         ax.set_xlim(-2.2, 2.2)
         ax.set_ylim(-2.2, 2.2)
         ax.set_aspect("equal")
-        ax.set_title(f"{os.path.basename(pkl_path)} | step {k+1}/{len(states)}")
+        ax.set_title(f"{os.path.basename(pkl_path)} | step {k + 1}/{len(states)}")
 
         plt.pause(0.02)
 

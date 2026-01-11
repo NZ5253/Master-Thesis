@@ -5,8 +5,8 @@ This module implements the hybrid controller that combines TEB planning and MPC 
 to eliminate oscillations in parking maneuvers.
 
 Architecture:
-1. TEB plans ONCE at the start → Creates committed reference trajectory
-2. MPC tracks the reference → No re-planning oscillations
+1. TEB plans ONCE at the start -> Creates committed reference trajectory
+2. MPC tracks the reference -> No re-planning oscillations
 3. Smooth transition to final convergence
 
 Usage:
@@ -36,6 +36,10 @@ class HybridControllerState:
     current_step: int
     planning_count: int
     tracking_count: int
+
+    # NEW: time left (seconds) to stay on current reference step (dt_array-driven)
+    ref_step_time_left: float = 0.0
+
 
 
 class HybridController:
@@ -67,6 +71,7 @@ class HybridController:
             env_cfg: Environment configuration dict
             dt: Control timestep (seconds)
         """
+        self.env_cfg = env_cfg
         self.mpc = TEBMPC(config_path=config_path, env_cfg=env_cfg, dt=dt)
 
         # Internal state
@@ -83,18 +88,21 @@ class HybridController:
         self.goal_reached_pos_tol = 0.05         # 5cm position tolerance
         self.goal_reached_yaw_tol = 0.10         # ~5.7 degree yaw tolerance
         self.goal_reached_vel_tol = 0.05         # Stopped velocity
+        self.dt = float(dt)
 
         # Diagnostics
         self.last_info = {}
 
     def reset(self):
         """Reset controller state (call before new episode)."""
+        self.mpc.reset_warm_start()
         self.state = HybridControllerState(
             mode="planning",
             reference=None,
             current_step=0,
             planning_count=0,
-            tracking_count=0
+            tracking_count=0,
+            ref_step_time_left = 0.0
         )
         self.last_info = {}
 
@@ -148,9 +156,12 @@ class HybridController:
         )
 
         if not reference.success:
-            print(f"[HYBRID CONTROLLER] ❌ Planning failed, using zero control")
+            print(f"[HYBRID CONTROLLER] ❌ Planning failed, braking to stop")
             self.last_info = {"status": "planning_failed"}
-            return np.zeros(2)
+            max_acc = float(self.env_cfg.get("vehicle", {}).get("max_acc", 1.0))
+            desired_accel = -float(state.v) / max(self.dt, 1e-6)
+            desired_accel = float(np.clip(desired_accel, -max_acc, max_acc))
+            return np.array([0.0, desired_accel], dtype=float)
 
         # Store reference and transition to tracking
         self.state.reference = reference
@@ -158,10 +169,17 @@ class HybridController:
         self.state.planning_count += 1
         self.state.mode = "tracking"
 
+        # NEW: initialize time-left for ref step 0 using reference.dt_array
+        if reference.dt_array is not None and len(reference.dt_array) > 0:
+            self.state.ref_step_time_left = float(reference.dt_array[0])
+        else:
+            self.state.ref_step_time_left = self.dt
+
         print(f"[HYBRID CONTROLLER] ✓ Planned {reference.n_steps} steps ({reference.total_time:.2f}s)")
 
         # Execute first control from reference
         control = reference.get_control_at_step(0)
+        self.mpc._last_executed_control = control.copy()
 
         self.last_info = {
             "status": "planned",
@@ -199,8 +217,11 @@ class HybridController:
             else:
                 # Far from goal, continue tracking last waypoint
                 print(f"[HYBRID CONTROLLER] ⚠️ Reference ended but far from goal (pos_err={pos_err:.3f}m)")
-                self.state.mode = "final_convergence"
-                return self._final_convergence(state, goal, obstacles, profile)
+                self.state.mode = "planning"
+                self.state.reference = None
+                self.state.current_step = 0
+                self.state.ref_step_time_left = 0.0
+                return self._plan_and_execute(state, goal, obstacles, profile)
 
         # Track reference using MPC
         sol = self.mpc.track_trajectory(
@@ -212,13 +233,28 @@ class HybridController:
         )
 
         if not sol.success:
-            print(f"[HYBRID CONTROLLER] ❌ Tracking failed at step {self.state.current_step}")
+            print(f"[HYBRID CONTROLLER] ❌ Tracking failed at step {self.state.current_step} (braking to stop)")
             self.last_info = {"status": "tracking_failed", "step": self.state.current_step}
-            return np.zeros(2)
+            max_acc = float(self.env_cfg.get("vehicle", {}).get("max_acc", 1.0))
+            desired_accel = -float(state.v) / max(self.dt, 1e-6)
+            desired_accel = float(np.clip(desired_accel, -max_acc, max_acc))
+            return np.array([0.0, desired_accel], dtype=float)
 
-        # Increment step counter
-        self.state.current_step += 1
+        # Increment tracking count
         self.state.tracking_count += 1
+
+        # NEW: dt-consistent playback of the reference
+        ref = self.state.reference
+        if ref is not None and ref.dt_array is not None and len(ref.dt_array) > 0:
+            self.state.ref_step_time_left -= self.dt
+
+            # Advance ref index only when we have "spent" the step's dt
+            while self.state.ref_step_time_left <= 0.0 and self.state.current_step < (ref.n_steps - 1):
+                self.state.current_step += 1
+                self.state.ref_step_time_left += float(ref.dt_array[self.state.current_step])
+        else:
+            # Fallback: if dt_array missing, step each tick (old behavior)
+            self.state.current_step += 1
 
         # Diagnostics
         pos_err = np.sqrt((state.x - goal.x)**2 + (state.y - goal.y)**2)

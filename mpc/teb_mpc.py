@@ -42,11 +42,18 @@ class ParkingGoal:
 
 @dataclass
 class Obstacle:
+    """Axis-aligned or oriented rectangle obstacle.
+
+    Parameters are half-extents in the obstacle's local frame.
+    - hx: half-length along obstacle local x-axis
+    - hy: half-length along obstacle local y-axis
+    - theta: obstacle heading in world frame (rad)
+    """
     cx: float
     cy: float
     hx: float
     hy: float
-
+    theta: float = 0.0
 
 @dataclass
 class MPCSolution:
@@ -87,7 +94,11 @@ class TEBMPC:
             if dt is not None:
                 self.dt = float(dt)
             else:
-                self.dt = float(self.mpc_cfg.get("dt", 0.1))  # legacy fallback
+                if "dt" in env_cfg:
+                    self.dt = float(env_cfg["dt"])
+                else:
+                    self.dt = float(self.mpc_cfg.get("dt", 0.1))  # legacy fallback
+
             world_cfg = env_cfg.get("world", {})
             self.world_w = float(world_cfg.get("width", 4.0))
             self.world_h = float(world_cfg.get("height", 4.0))
@@ -116,6 +127,12 @@ class TEBMPC:
         self.w_slew_rate_steer = float(self.mpc_cfg.get("w_slew_rate_steer", 0.5))  # NEW: Very weak (too strong causes collisions)
         self.w_slew_rate_accel = float(self.mpc_cfg.get("w_slew_rate_accel", 0.2))  # NEW: Very weak
         self.w_collision = float(self.mpc_cfg.get("w_collision", 5.0))
+        self.obs_inflate = float(self.mpc_cfg.get("obs_inflate", 0.0))
+        self.collision_margin = float(self.mpc_cfg.get("collision_margin", 0.0))
+        # Scale factors for soft constraints (avoid extremely steep gradients)
+        self.collision_scale = max(1e-3, float(self.mpc_cfg.get("collision_scale", 0.05)))
+        self.boundary_scale = max(1e-3, float(self.mpc_cfg.get("boundary_scale", 0.05)))
+
         self.w_boundary = float(self.mpc_cfg.get("w_boundary", 30.0))
         self.w_reverse_penalty = float(self.mpc_cfg.get("w_reverse_penalty", 0.1))
         self.w_gear_change = float(self.mpc_cfg.get("w_gear_change", 0.0))
@@ -167,12 +184,15 @@ class TEBMPC:
         # -------- Vehicle geometry (from env.vehicle only) --------
         self.length = float(self.vehicle_cfg["length"])
         self.width = float(self.vehicle_cfg["width"])
-        # Circle model radius
-        self.circle_radius = self.width / 2.0
+
+        # Circle model radius:
+        # Using 4 spine circles, we enlarge the radius just enough so the union
+        # covers the ego rectangle corners (prevents corner-clipping collisions).
+        step = self.length / 8.0
+        self.circle_radius = float(np.hypot(self.width / 2.0, step))
 
         # 4-circle footprint: spine only for faster solving
         dist_ra_to_center = self.length / 2.0 - 0.05
-        step = self.length / 8.0
 
         self.circle_offsets = [
             # Spine circles (x_offset, y_offset=0)
@@ -203,6 +223,9 @@ class TEBMPC:
         self.solver_perpendicular = None
         self.solver_parallel_teb = None  # TEB-enabled solver for planning
         self.solver_perpendicular_teb = None  # TEB-enabled solver for planning
+        # Track which horizon each TEB solver was built with (so we can rebuild if needed)
+        self._solver_parallel_teb_N: Optional[int] = None
+        self._solver_perpendicular_teb_N: Optional[int] = None
         self._last_X, self._last_U = None, None
         self._last_dt = None  # Store last dt solution for warm-start (TEB)
         self._last_executed_control = np.array([0.0, 0.0])  # [steering, accel] for slew rate penalty
@@ -210,6 +233,8 @@ class TEBMPC:
         self._current_phase = ParkingPhase.APPROACH
         self._cusp_detected = False
         self._prev_v = 0.0
+        # Conservative buffer around pin obstacles (keeps you collision-free with rectangle env)
+        self.pin_safety_buffer = float(self.mpc_cfg.get("pin_safety_buffer", 0.10))
 
         if ca is not None:
             # Build solvers with default weights - profiles are applied at runtime in solve()
@@ -221,6 +246,36 @@ class TEBMPC:
             # Build TEB-enabled solvers for planning mode (lazy initialization)
             # These will be built on first use in plan_trajectory()
             # self.solver_parallel_teb and self.solver_perpendicular_teb = None initially
+
+    def reset_warm_start(self) -> None:
+        """Clear cached warm-start state.
+
+        Call this at episode boundaries and whenever you switch to a new high-level
+        phase/mode (e.g., A→B approach → B→C parking) to prevent solver bias.
+        """
+        self._last_X, self._last_U = None, None
+        self._last_dt = None
+        self._last_executed_control = np.array([0.0, 0.0])
+
+        # Reset internal phase/cusp detection so diagnostics are clean per episode.
+        self._current_phase = ParkingPhase.APPROACH
+        self._cusp_detected = False
+        self._prev_v = 0.0
+
+        # Force profile to be re-applied on next solve/plan.
+        self._current_profile = None
+
+    def _obstacle_radius(self, o: Obstacle) -> float:
+        """Convert obstacle half-sizes (hx, hy) into a conservative circle radius."""
+        max_dim = max(o.hx, o.hy)
+        min_dim = min(o.hx, o.hy)
+
+        if max_dim > 1.0:
+            return 0.30  # world walls
+        if max_dim > 0.6 and min_dim < 0.05:
+            return 0.04  # thin curb/bar
+        # pins / parked-car approximation
+        return max(o.hx, o.hy) + self.pin_safety_buffer
 
     def _apply_profile(self, profile: str):
         if self._current_profile == profile:
@@ -298,6 +353,21 @@ class TEBMPC:
         print(f"  -> w_reverse_penalty:{self.w_reverse_penalty}")
         if self.w_gear_change > 0:
             print(f"  -> w_gear_change:    {self.w_gear_change}")
+        # Rebuild solver so updated profile weights are baked into the objective
+        if ca is not None:
+            old_teb = self.enable_teb
+            self.enable_teb = False
+
+            if profile == "parallel":
+                self.solver_parallel = self._build_solver(parking_type="parallel")
+            else:
+                # 'perpendicular' and also 'approach' use this solver
+                self.solver_perpendicular = self._build_solver(parking_type="perpendicular")
+
+            self.enable_teb = old_teb
+        # IMPORTANT: profile changes invalidate cached TEB planners too (weights are baked at build time)
+        self.solver_parallel_teb = None
+        self.solver_perpendicular_teb = None
 
     def _detect_cusp(self, current_v: float) -> bool:
         """Detect direction change (cusp point) in trajectory"""
@@ -396,20 +466,27 @@ class TEBMPC:
         else:
             DT = None                  # Use fixed dt
 
-        # Parameter vector: [initial_state(4), goal(3), obstacles(3*max), prev_control(2)]
-        P = ca.SX.sym("P", 4 + 3 + 3 * self.max_obstacles + 2)
+        # Parameter vector:
+        #   [initial_state(4), goal(3), obstacles(6*max), prev_control(2)]
+        # Obstacles are oriented rectangles encoded as:
+        #   [cx, cy, hx, hy, cos(theta), sin(theta)]
+        P = ca.SX.sym("P", 4 + 3 + 6 * self.max_obstacles + 2)
 
         goal_x, goal_y, goal_yaw = P[4], P[5], P[6]
-        obs_cx, obs_cy, obs_r = [], [], []
+
+        obs_cx, obs_cy, obs_hx, obs_hy, obs_c, obs_s = [], [], [], [], [], []
         for j in range(self.max_obstacles):
-            base = 7 + 3 * j
+            base = 7 + 6 * j
             obs_cx.append(P[base])
             obs_cy.append(P[base + 1])
-            obs_r.append(P[base + 2])
+            obs_hx.append(P[base + 2])
+            obs_hy.append(P[base + 3])
+            obs_c.append(P[base + 4])
+            obs_s.append(P[base + 5])
 
         # Previous control (last executed) for slew rate penalty
-        prev_steer = P[7 + 3 * self.max_obstacles]
-        prev_accel = P[7 + 3 * self.max_obstacles + 1]
+        prev_steer = P[7 + 6 * self.max_obstacles]
+        prev_accel = P[7 + 6 * self.max_obstacles + 1]
 
         obj = 0
         g = [X[:, 0] - P[0:4]]
@@ -417,12 +494,25 @@ class TEBMPC:
         def angle_wrap(a):
             return ca.atan2(ca.sin(a), ca.cos(a))
 
+        # ----------------------------------------------------------------------
+        # Smooth helpers (avoid non-smooth fabs/fmax/fmin kinks -> NaN gradients)
+        # ----------------------------------------------------------------------
+        eps_sdf = 1e-8
+        def smooth_abs(z):
+            return ca.sqrt(z * z + eps_sdf)
+        def smooth_max(a, b):
+            return 0.5 * (a + b + ca.sqrt((a - b) ** 2 + eps_sdf))
+        def smooth_min(a, b):
+            return 0.5 * (a + b - ca.sqrt((a - b) ** 2 + eps_sdf))
+        def smooth_relu(z):
+            return smooth_max(z, 0.0)
+
         for k in range(N):
             st = X[:, k]
             u = U[:, k]
 
             yaw_err = angle_wrap(st[2] - goal_yaw)
-            gain = 8.0 if k == N - 1 else 1.0
+            gain = 13.0 if k == N - 1 else 1.0  # Strong terminal attraction for deeper goal commitment
 
             # Build parking-type-specific cost
             if parking_type == "parallel":
@@ -433,25 +523,25 @@ class TEBMPC:
                 # --- Error calculations ---
                 lateral_err = st[0] - goal_x
                 depth_err_raw = st[1] - goal_y
-                depth_err_abs = ca.fabs(depth_err_raw)
-                yaw_err_abs = ca.fabs(yaw_err)
+                depth_err_abs = smooth_abs(depth_err_raw)
+                yaw_err_abs = smooth_abs(yaw_err)
 
                 # Total distance to goal
                 goal_dist = ca.sqrt(lateral_err ** 2 + depth_err_abs ** 2)
 
                 # --- Monotonic depth constraint (prevent backing out initially) ---
-                depth_penalty_asymmetric = ca.fmax(0, depth_err_raw)  # Only penalize being too shallow
+                depth_penalty_asymmetric = smooth_relu(depth_err_raw)  # Only penalize being too shallow
 
                 # --- Progress penalty: penalize moving AWAY when close to goal ---
                 # FIXED: Use Gaussian activation instead of broken exponential
                 if k > 0:
                     prev_st = X[:, k - 1]
                     prev_lateral_err = prev_st[0] - goal_x
-                    prev_depth_err = ca.fabs(prev_st[1] - goal_y)
+                    prev_depth_err = smooth_abs(prev_st[1] - goal_y)
                     prev_dist = ca.sqrt(prev_lateral_err ** 2 + prev_depth_err ** 2)
 
                     # Detect if moving away (distance increasing)
-                    dist_increase = ca.fmax(0, goal_dist - prev_dist)
+                    dist_increase = smooth_relu(goal_dist - prev_dist)
 
                     # FIXED: Gaussian activation instead of exp(-dist/threshold)
                     # Activates strongly within 15cm, decays smoothly beyond
@@ -474,25 +564,32 @@ class TEBMPC:
                 depth_reward_quadratic = -(depth_err_abs ** 2) * self.depth_reward_quadratic * proximity_activation
                 depth_reward = depth_reward_base + depth_reward_quadratic
 
+                # --- CURB OVERSHOOT PENALTY ---
+                # Prevent car from going past the goal (curb line)
+                # Only penalize if car overshoots in depth direction (negative depth_err_raw)
+                overshoot = smooth_max(0.0, -depth_err_raw)  # positive when past goal
+                # Strong quadratic penalty for overshooting: 50.0 * overshoot²
+                curb_penalty = 50.0 * (overshoot ** 2)
+
                 # --- Multi-phase detection for adaptive behavior ---
                 # FINAL_ALIGN phase: activates when depth < threshold AND yaw < threshold
                 # Smooth fade-in using linear interpolation over range
-                in_final_align = ca.fmin(1.0, ca.fmax(0.0,
+                in_final_align = smooth_min(1.0, smooth_max(0.0,
                     (self.final_align_depth_threshold - depth_err_abs) / self.final_align_depth_range))
-                well_aligned_yaw = ca.fmin(1.0, ca.fmax(0.0,
+                well_aligned_yaw = smooth_min(1.0, smooth_max(0.0,
                     (self.final_align_yaw_threshold - yaw_err_abs) / self.final_align_yaw_range))
                 final_phase = in_final_align * well_aligned_yaw
 
                 # --- Phase-aware speed-steering coupling ---
                 # Entry: high coupling prevents collisions
                 # Final: KEEP high coupling (was dropping to 0.45, now stays at 0.63+)
-                steer_magnitude = ca.fabs(u[0])
+                steer_magnitude = smooth_abs(u[0])
                 speed_steer_coupling = (steer_magnitude ** 2) * (st[3] ** 2)
                 # Maintain minimum 70% coupling even in final phase
-                coupling_weight = self.coupling_entry * ca.fmax(0.7, (1.0 - self.coupling_reduction * final_phase))
+                coupling_weight = self.coupling_entry * smooth_max(0.7, (1.0 - self.coupling_reduction * final_phase))
 
                 # --- Speed limit enforcement ---
-                speed_excess = ca.fmax(0, ca.fabs(st[3]) - self.max_comfortable_speed)
+                speed_excess = smooth_relu(smooth_abs(st[3]) - self.max_comfortable_speed)
 
                 # --- Assemble parallel parking cost function ---
                 obj += gain * (
@@ -503,7 +600,8 @@ class TEBMPC:
                     self.w_goal_v * st[3] ** 2 +
                     self.w_goal_xy * coupling_weight * speed_steer_coupling +
                     self.w_goal_xy * self.speed_excess_weight * speed_excess ** 2 +
-                    self.w_goal_xy * 10.0 * progress_penalty  # Prevent moving away when close
+                    self.w_goal_xy * 10.0 * progress_penalty +  # Prevent moving away when close
+                    curb_penalty  # Prevent overshooting past goal/curb
                 )
             else:  # perpendicular
                 # ==== PERPENDICULAR PARKING: Standard XY goal tracking ====
@@ -557,28 +655,55 @@ class TEBMPC:
                 gear_change_cost = 1.0 - ca.tanh(velocity_product * 50.0)  # 50 makes it sharp
                 obj += self.w_gear_change * gear_change_cost
 
-            # --- 4-CIRCLE COLLISION CHECK with 2D rotation ---
+            # --- 4-CIRCLE COLLISION CHECK (ego circles vs oriented rectangles) ---
+            # Signed distance to oriented rectangle (SDF)
+            # NOTE: Using fabs/fmax/fmin makes the SDF non-smooth (kinks), which can trigger
+            # CasADi warnings like "NaN detected for output grad_f_x" during Ipopt multiplier
+            # calculations. These smooth approximations keep the same shape but make gradients
+            # well-defined everywhere.
+
+            def rect_sdf(px, py, j):
+                dx = px - obs_cx[j]
+                dy = py - obs_cy[j]
+                # local = R^T (p - c)
+                lx = obs_c[j] * dx + obs_s[j] * dy
+                ly = -obs_s[j] * dx + obs_c[j] * dy
+
+                hx = obs_hx[j] + self.obs_inflate
+                hy = obs_hy[j] + self.obs_inflate
+
+                qx = smooth_abs(lx) - hx
+                qy = smooth_abs(ly) - hy
+
+                ox = smooth_max(qx, 0.0)
+                oy = smooth_max(qy, 0.0)
+                outside = ca.sqrt(ox * ox + oy * oy + 1e-9)
+                inside = smooth_min(smooth_max(qx, qy), 0.0)
+                return outside + inside
+
             c_theta = ca.cos(st[2])
             s_theta = ca.sin(st[2])
 
-            # Loop over all 4 ego circles (spine)
             for offset_x, offset_y in self.circle_offsets:
-                # Rotate offset by vehicle yaw (2D rotation matrix)
                 cx = st[0] + offset_x * c_theta - offset_y * s_theta
                 cy = st[1] + offset_x * s_theta + offset_y * c_theta
 
-                # Check against all obstacles
                 for j in range(self.max_obstacles):
-                    dist = ca.sqrt((cx - obs_cx[j]) ** 2 + (cy - obs_cy[j]) ** 2 + 1e-9)
-                    penetration = (obs_r[j] + self.circle_radius) - dist
-                    # Soft constraint with squared penalty
-                    obj += self.w_collision * ca.fmax(0, penetration) ** 2
+                    sdf = rect_sdf(cx, cy, j)
+                    penetration = (self.circle_radius + self.collision_margin) - sdf
 
-            # Boundary
-            for val, limit, margin in [(st[0], self.x_min, 1), (st[0], self.x_max, -1),
-                                       (st[1], self.y_min, 1), (st[1], self.y_max, -1)]:
-                dist_bound = (limit - val) * margin
-                obj += self.w_boundary * 0.5 * (ca.fmax(0, self.boundary_margin - dist_bound)) ** 2
+                    # Standard isotropic collision penalty
+                    # With obs_inflate=0.02, obstacles are slightly larger for safety margin
+                    obj += self.w_collision * (smooth_max(penetration, 0.0) / self.collision_scale) ** 2
+
+            # Boundary (positive distance when inside bounds)
+            d_xmax = self.x_max - st[0]
+            d_xmin = st[0] - self.x_min
+            d_ymax = self.y_max - st[1]
+            d_ymin = st[1] - self.y_min
+            for d in [d_xmax, d_xmin, d_ymax, d_ymin]:
+                # Scale logic applied here
+                obj += self.w_boundary * 0.5 * (smooth_max(self.boundary_margin - d, 0.0) / self.boundary_scale) ** 2
 
             # Dynamics (TEB: use variable dt[k] if enabled, else fixed dt)
             dt_k = DT[k] if self.enable_teb else dt
@@ -604,7 +729,7 @@ class TEBMPC:
             # Compute minimum obstacle distance for each waypoint
             for k in range(N):
                 st = X[:, k]
-                min_obs_dist = ca.inf
+                min_obs_dist = 1e3  # NOTE: avoid ca.inf (can cause NaN gradients in Ipopt/CasADi)
 
                 # Check distance to all obstacles
                 for j in range(self.max_obstacles):
@@ -615,17 +740,14 @@ class TEBMPC:
                     center_x = st[0] + dist_to_center * c_theta
                     center_y = st[1] + dist_to_center * s_theta
 
-                    dist_to_obs = ca.sqrt(
-                        (center_x - obs_cx[j]) ** 2 + (center_y - obs_cy[j]) ** 2 + 1e-9
-                    ) - obs_r[j]
+                    dist_to_obs = rect_sdf(center_x, center_y, j)
+                    min_obs_dist = smooth_min(min_obs_dist, dist_to_obs)
 
-                    min_obs_dist = ca.fmin(min_obs_dist, dist_to_obs)
-
-                # Penalize large dt when close to obstacles
-                # Cost increases as: dt / (distance + safety_margin)
                 safety_margin = 0.15  # meters
-                obstacle_time_scaling = DT[k] / (min_obs_dist + safety_margin)
+                den = smooth_max(min_obs_dist, 0.0) + safety_margin + 1e-6
+                obstacle_time_scaling = DT[k] / den
                 obj += self.w_dt_obstacle * obstacle_time_scaling ** 2
+
 
             # # 4. Precision-aware time scaling: encourage smaller dt when close to goal
             # # DISABLED FOR BASELINE - Can enable with w_dt_precision > 0
@@ -760,12 +882,13 @@ class TEBMPC:
     def solve(self, state: VehicleState, goal: ParkingGoal, obstacles: List[Obstacle],
               profile: str = "perpendicular") -> MPCSolution:
         # Select appropriate solver based on parking type
+        self._apply_profile(profile)
         solver = self.solver_parallel if profile == "parallel" else self.solver_perpendicular
         if solver is None:
             return MPCSolution(np.zeros((1, 4)), np.zeros((1, 2)), False, {}, None)
 
         # Apply base profile weights
-        self._apply_profile(profile)
+
 
         # DEBUG: Verify slew rate weights
         if False:  # Set to True for debugging
@@ -806,40 +929,37 @@ class TEBMPC:
             U0[:-1] = self._last_U[1:]
             U0[-1] = self._last_U[-1]
 
-        # Parameter vector: [initial_state(4), goal(3), obstacles(3*max), prev_control(2)]
-        P = np.zeros(4 + 3 + 3 * self.max_obstacles + 2)
+        # Parameter vector: [initial_state(4), goal(3), obstacles(6*max), prev_control(2)]
+        P = np.zeros(4 + 3 + 6 * self.max_obstacles + 2)
         P[0:4] = x0
         P[4:7] = [gx, gy, gyaw]
 
+        # Initialize unused obstacle slots far away (effectively disabling them)
+        for j in range(self.max_obstacles):
+            idx = 7 + 6 * j
+            P[idx] = 1e6  # cx
+            P[idx + 1] = 1e6  # cy
+            P[idx + 2] = 0.0  # hx
+            P[idx + 3] = 0.0  # hy
+            P[idx + 4] = 1.0  # cos(theta)
+            P[idx + 5] = 0.0  # sin(theta)
+
+        # Fill used obstacles (rectangles)
         for j, o in enumerate(obstacles[:self.max_obstacles]):
-            idx = 7 + 3 * j
-            P[idx] = o.cx
-            P[idx + 1] = o.cy
-
-            # Classify obstacle shape:
-            #   - big (hx or hy > 1.0): world walls
-            #   - long & very thin: curb-like bar
-            #   - other "fat" blocks: parked cars / random boxes
-            max_dim = max(o.hx, o.hy)
-            min_dim = min(o.hx, o.hy)
-
-            if max_dim > 1.0:
-                # World walls: strong, wide repulsion
-                r = 0.30
-            elif max_dim > 0.6 and min_dim < 0.05:
-                # Long, thin bar -> curb: softer, narrower repulsion
-                r = 0.04
-            else:
-                # Parked cars etc. (4 corner pins or small blocks)
-                r = 0.10
-
-            P[idx + 2] = r
+            idx = 7 + 6 * j
+            P[idx] = float(o.cx)
+            P[idx + 1] = float(o.cy)
+            P[idx + 2] = float(max(o.hx, 0.0))
+            P[idx + 3] = float(max(o.hy, 0.0))
+            th = float(getattr(o, "theta", 0.0))
+            P[idx + 4] = float(np.cos(th))
+            P[idx + 5] = float(np.sin(th))
 
         # Add previous control for slew rate penalty
-        prev_control_idx = 7 + 3 * self.max_obstacles
-        P[prev_control_idx] = self._last_executed_control[0]      # steering
-        P[prev_control_idx + 1] = self._last_executed_control[1]  # accel
-
+        prev_control_idx = 7 + 6 * self.max_obstacles
+        # Use self._last_executed_control (renamed from prev_steer/accel in logic for clarity)
+        P[prev_control_idx] = float(self._last_executed_control[0])
+        P[prev_control_idx + 1] = float(self._last_executed_control[1])
         # ============================================================================
         # BOUNDS & SOLVER CALL
         # ============================================================================
@@ -896,219 +1016,23 @@ class TEBMPC:
     def first_control(self, sol: MPCSolution) -> np.ndarray:
         return sol.controls[0] if len(sol.controls) > 0 else np.zeros(2)
 
-    def plan_trajectory(self, state: VehicleState, goal: ParkingGoal, obstacles: List[Obstacle],
-                       profile: str = "parallel", horizon_override: Optional[int] = None) -> ReferenceTrajectory:
+    def plan_trajectory(
+        self,
+        state: VehicleState,
+        goal: ParkingGoal,
+        obstacles: List[Obstacle],
+        profile: str = "parallel",
+        horizon_override: Optional[int] = None,
+    ) -> ReferenceTrajectory:
+        """Plan a committed reference trajectory using a TEB-enabled NLP.
+
+        Notes:
+        - Uses a *planner horizon* (teb.horizon) which may be longer than tracking MPC horizon.
+        - Maintains separate cached TEB solvers for parallel/perpendicular and rebuilds them if
+          the requested planner horizon changes.
+        - Parameter vector matches _build_solver(): [x0(4), goal(3), obs(6*max), prev_u(2)].
         """
-        Generate a complete reference trajectory from current state to goal using TEB.
-
-        This method is used in PLANNING MODE for the hybrid architecture.
-        Unlike solve() which re-optimizes every step, this creates a committed
-        trajectory ONCE that will be tracked by MPC without re-planning.
-
-        Key differences from solve():
-        1. Uses LONGER horizon (80-100 steps to reach goal)
-        2. STRONG time minimization weight (encourages committed maneuvers)
-        3. Returns full ReferenceTrajectory with variable dt
-        4. Only called ONCE at start, not every step
-
-        Args:
-            state: Current vehicle state
-            goal: Parking goal pose
-            obstacles: List of obstacles
-            profile: "parallel" or "perpendicular"
-            horizon_override: Override horizon length (default: use config)
-
-        Returns:
-            ReferenceTrajectory with committed maneuvers
-        """
-        # Build TEB solver if needed (lazy initialization)
-        if profile == "parallel":
-            if self.solver_parallel_teb is None:
-                print("[TEB PLANNER] Building TEB-enabled parallel solver...")
-                original_teb_state = self.enable_teb
-                self.enable_teb = True
-                self.solver_parallel_teb = self._build_solver(parking_type="parallel")
-                self.enable_teb = original_teb_state
-            teb_solver = self.solver_parallel_teb
-        else:
-            if self.solver_perpendicular_teb is None:
-                print("[TEB PLANNER] Building TEB-enabled perpendicular solver...")
-                original_teb_state = self.enable_teb
-                self.enable_teb = True
-                self.solver_perpendicular_teb = self._build_solver(parking_type="perpendicular")
-                self.enable_teb = original_teb_state
-            teb_solver = self.solver_perpendicular_teb
-
-        # Save original state
-        original_enable_teb = self.enable_teb
-        original_N = self.N
-        teb_cfg = self.mpc_cfg.get("teb", {})
-        original_w_time = teb_cfg.get("w_time", 0.0)
-        original_dt_min = self.dt_min
-        original_dt_max = self.dt_max
-
-        # Temporarily set TEB mode for solve()
-        self.enable_teb = True
-
-        # Keep horizon as is (solver was built with this N)
-        # TEB will naturally create shorter trajectories if goal is reached early
-        if horizon_override is not None:
-            print(f"[TEB PLANNER] WARNING: Cannot change horizon after solver is built")
-            print(f"[TEB PLANNER] Using solver's horizon: {self.N}")
-
-        print(f"[TEB PLANNER] Planning trajectory: horizon={self.N}, profile={profile}")
-
-        # TEB configuration for committed maneuvers
-        # CRITICAL BALANCE:
-        # - Strong goal weight → ensures we reach the goal
-        # - Moderate time minimization → encourages efficiency but doesn't override goal
-        # - Variable dt → allows committed maneuvers (long dt) and precision (short dt)
-
-        # Temporarily boost goal weights to ensure trajectory reaches goal
-        original_w_goal_xy = self.w_goal_xy
-        original_w_goal_theta = self.w_goal_theta
-        self.w_goal_xy = 600.0  # Even stronger than tracking (400.0)
-        self.w_goal_theta = 180.0  # Even stronger than tracking (120.0)
-
-        # Disable time minimization - let dt variation come from dynamics
-        # Time minimization forces all dt → dt_max, preventing variation
-        self.w_time = 0.0  # No explicit time minimization
-
-        # Allow variable dt for committed maneuvers
-        self.dt_min = 0.08  # Precision near goal
-        self.dt_max = 0.25  # Committed maneuvers (reduced from 0.30 for better control)
-
-        print(f"[TEB PLANNER] Config: N={self.N}, w_time={self.w_time}, dt=[{self.dt_min}, {self.dt_max}]")
-        print(f"[TEB PLANNER] Goal weights: xy={self.w_goal_xy}, theta={self.w_goal_theta}")
-
-        # Apply profile weights
-        self._apply_profile(profile)
-
-        try:
-            # Plan trajectory by calling TEB solver directly
-            # This is essentially what solve() does but we use the TEB solver explicitly
-
-            # Detect current phase
-            current_phase = self._update_phase(state, goal, profile)
-
-            # Initial Guess
-            x0 = np.array([state.x, state.y, state.yaw, state.v])
-            gx, gy, gyaw = goal.x, goal.y, goal.yaw
-            diff = (gyaw - state.yaw + np.pi) % (2 * np.pi) - np.pi
-            unwound_gyaw = state.yaw + diff
-
-            X0 = np.zeros((self.N + 1, 4))
-            for k in range(self.N + 1):
-                alpha = k / self.N
-                X0[k] = (1 - alpha) * x0 + alpha * np.array([gx, gy, unwound_gyaw, 0])
-            U0 = np.zeros((self.N, 2))
-            DT0 = np.ones(self.N) * self.dt_init  # TEB: variable dt
-
-            # Parameter vector
-            P = np.zeros(4 + 3 + 3 * self.max_obstacles + 2)
-            P[0:4] = x0
-            P[4:7] = [gx, gy, gyaw]
-
-            for j, o in enumerate(obstacles[:self.max_obstacles]):
-                idx = 7 + 3 * j
-                P[idx] = o.cx
-                P[idx + 1] = o.cy
-                # Obstacle radius classification
-                max_dim = max(o.hx, o.hy)
-                min_dim = min(o.hx, o.hy)
-                if max_dim > 1.0:
-                    r = 0.30
-                elif max_dim > 0.6 and min_dim < 0.05:
-                    r = 0.04
-                else:
-                    r = 0.10
-                P[idx + 2] = r
-
-            # Previous control for slew rate penalty
-            prev_control_idx = 7 + 3 * self.max_obstacles
-            P[prev_control_idx] = 0.0  # No previous control for initial planning
-            P[prev_control_idx + 1] = 0.0
-
-            # Bounds
-            lbx_states = [-np.inf] * 4 * (self.N + 1)
-            ubx_states = [np.inf] * 4 * (self.N + 1)
-            lbx_controls = [-0.52, -1.0] * self.N
-            ubx_controls = [0.52, 1.0] * self.N
-            lbx_dt = [self.dt_min] * self.N
-            ubx_dt = [self.dt_max] * self.N
-            lbx = lbx_states + lbx_controls + lbx_dt
-            ubx = ubx_states + ubx_controls + ubx_dt
-            x0_init = ca.vertcat(X0.flatten(), U0.flatten(), DT0)
-
-            # Solve with TEB solver
-            res = teb_solver(x0=x0_init, lbx=lbx, ubx=ubx, lbg=0, ubg=0, p=P)
-            res_x = np.array(res["x"]).flatten()
-
-            # Extract solution
-            X_sol = res_x[:4 * (self.N + 1)].reshape(self.N + 1, 4)
-            U_sol = res_x[4 * (self.N + 1):4 * (self.N + 1) + 2 * self.N].reshape(self.N, 2)
-            DT_sol = res_x[4 * (self.N + 1) + 2 * self.N:]
-
-            # Truncate trajectory at goal (if reached early)
-            # Find first waypoint that reaches goal within tolerance
-            goal_tolerance_xy = 0.05  # 5cm
-            goal_tolerance_yaw = 0.10  # ~5.7 degrees
-
-            goal_reached_at = None
-            for k in range(self.N + 1):
-                pos_err = np.sqrt((X_sol[k, 0] - goal.x)**2 + (X_sol[k, 1] - goal.y)**2)
-                yaw_diff = abs((X_sol[k, 2] - goal.yaw + np.pi) % (2 * np.pi) - np.pi)
-
-                if pos_err < goal_tolerance_xy and yaw_diff < goal_tolerance_yaw:
-                    goal_reached_at = k
-                    break
-
-            if goal_reached_at is not None and goal_reached_at < self.N - 5:
-                # Goal reached early, truncate trajectory
-                # Keep a few extra steps (5) for final settling
-                truncate_at = min(goal_reached_at + 5, self.N)
-                print(f"[TEB PLANNER] Goal reached at step {goal_reached_at}, truncating to {truncate_at} steps")
-
-                X_sol = X_sol[:truncate_at+1]  # +1 because X has N+1 states
-                U_sol = U_sol[:truncate_at]
-                DT_sol = DT_sol[:truncate_at]
-
-                # Update N for reference trajectory
-                actual_N = truncate_at
-            else:
-                actual_N = self.N
-
-            # Create ReferenceTrajectory from TEB solution
-            ref_traj = ReferenceTrajectory.from_teb_solution(
-                states=X_sol[:-1],  # Exclude final state (N+1 → N)
-                controls=U_sol,      # N controls
-                dt_array=DT_sol,     # N dt values
-                metadata={
-                    "planning_horizon": self.N,
-                    "profile": profile,
-                    "w_time": self.w_time,
-                    "dt_max": self.dt_max,
-                    "phase": current_phase.value
-                }
-            )
-
-            print(f"[TEB PLANNER] ✓ Planning succeeded:")
-            print(f"  Steps: {ref_traj.n_steps}")
-            print(f"  Duration: {ref_traj.total_time:.2f}s")
-            print(f"  Avg dt: {np.mean(DT_sol):.3f}s")
-            print(f"  dt range: [{np.min(DT_sol):.3f}, {np.max(DT_sol):.3f}]")
-
-            # Analyze committed maneuvers (higher threshold = fewer, longer maneuvers)
-            maneuvers = ref_traj.analyze_maneuvers(steering_threshold=0.15)  # ~8.6 degrees
-            print(f"  Committed maneuvers: {len(maneuvers)}")
-            for i, m in enumerate(maneuvers):
-                print(f"    {i+1}. {m['description']}")
-
-            return ref_traj
-
-        except Exception as e:
-            print(f"[TEB PLANNER] Planning failed with exception: {str(e)}")
-            # Return failed trajectory
+        if ca is None:
             return ReferenceTrajectory(
                 states=np.zeros((1, 4)),
                 controls=np.zeros((1, 2)),
@@ -1116,18 +1040,203 @@ class TEBMPC:
                 total_time=0.0,
                 n_steps=1,
                 success=False,
-                metadata={"error": str(e)}
+                metadata={"error": "casadi_not_available"},
+            )
+
+        # ---- decide planning horizon ----
+        teb_cfg = self.mpc_cfg.get("teb", {}) or {}
+        N_plan = int(horizon_override) if horizon_override is not None else int(teb_cfg.get("horizon", self.N))
+        N_plan = max(5, N_plan)
+
+        # ---- ensure correct TEB solver exists (cache by profile + N_plan) ----
+        original_enable_teb = self.enable_teb
+        original_N = self.N
+
+        def _ensure_teb_solver(parking_type: str):
+            if parking_type == "parallel":
+                cached = self.solver_parallel_teb
+                cached_N = self._solver_parallel_teb_N
+            else:
+                cached = self.solver_perpendicular_teb
+                cached_N = self._solver_perpendicular_teb_N
+
+            if cached is None or cached_N != N_plan:
+                print(f"[TEB PLANNER] Building TEB-enabled {parking_type} solver (N={N_plan})...")
+                self.enable_teb = True
+                self.N = N_plan
+                solver = self._build_solver(parking_type=parking_type)
+                # restore immediately (solver keeps its own dimensions)
+                self.enable_teb = original_enable_teb
+                self.N = original_N
+
+                if parking_type == "parallel":
+                    self.solver_parallel_teb = solver
+                    self._solver_parallel_teb_N = N_plan
+                else:
+                    self.solver_perpendicular_teb = solver
+                    self._solver_perpendicular_teb_N = N_plan
+                return solver
+            return cached
+
+        parking_type = "parallel" if profile == "parallel" else "perpendicular"
+        teb_solver = _ensure_teb_solver(parking_type)
+
+        # ---- apply (tracking) profile weights first (rebuilds fixed-dt solver only) ----
+        self._apply_profile(profile)
+
+        # ---- planning-time tuning knobs (do NOT rebuild solver; just affects parameters & bounds) ----
+        # Keep goal pull strong to reach C from farther away.
+        original_w_goal_xy = self.w_goal_xy
+        original_w_goal_theta = self.w_goal_theta
+        original_dt_min = self.dt_min
+        original_dt_max = self.dt_max
+        original_w_time = self.w_time
+
+        self.w_goal_xy = max(self.w_goal_xy, 600.0)
+        self.w_goal_theta = max(self.w_goal_theta, 180.0)
+        # Let dt vary for committed maneuvers + precision near end.
+        self.dt_min = float(teb_cfg.get("dt_min", self.dt_min))
+        self.dt_max = float(teb_cfg.get("dt_max", self.dt_max))
+        self.w_time = float(teb_cfg.get("w_time", self.w_time))
+
+        print(f"[TEB PLANNER] Planning trajectory: profile={profile}, N_plan={N_plan}, dt=[{self.dt_min:.3f},{self.dt_max:.3f}]")
+
+        try:
+            # Detect current phase (for metadata only)
+            current_phase = self._update_phase(state, goal, profile)
+
+            x0 = np.array([state.x, state.y, state.yaw, state.v], dtype=float)
+            gx, gy, gyaw = float(goal.x), float(goal.y), float(goal.yaw)
+
+            # Unwind goal yaw to be close to current yaw for a nicer initial guess
+            diff = (gyaw - state.yaw + np.pi) % (2 * np.pi) - np.pi
+            unwound_gyaw = state.yaw + diff
+
+            # Initial guesses
+            X0 = np.zeros((N_plan + 1, 4), dtype=float)
+            for k in range(N_plan + 1):
+                alpha = k / float(N_plan)
+                X0[k] = (1 - alpha) * x0 + alpha * np.array([gx, gy, unwound_gyaw, 0.0], dtype=float)
+
+            U0 = np.zeros((N_plan, 2), dtype=float)
+            DT0 = np.ones(N_plan, dtype=float) * float(getattr(self, "dt_init", self.dt))
+
+            # Warm-start from last TEB solution if available and compatible
+            if self._last_X is not None and self._last_U is not None and self._last_X.shape[0] == (N_plan + 1):
+                X0[:-1] = self._last_X[1:]
+                X0[-1] = self._last_X[-1]
+                U0[:-1] = self._last_U[1:]
+                U0[-1] = self._last_U[-1]
+            if self._last_dt is not None and len(self._last_dt) == N_plan:
+                DT0[:-1] = self._last_dt[1:]
+                DT0[-1] = self._last_dt[-1]
+
+            # Parameter vector matches _build_solver()
+            P = np.zeros(4 + 3 + 6 * self.max_obstacles + 2, dtype=float)
+            P[0:4] = x0
+            P[4:7] = [gx, gy, gyaw]
+
+            # Disable all obstacle slots far away first
+            for j in range(self.max_obstacles):
+                idx = 7 + 6 * j
+                P[idx] = 1e6        # cx
+                P[idx + 1] = 1e6    # cy
+                P[idx + 2] = 0.0    # hx
+                P[idx + 3] = 0.0    # hy
+                P[idx + 4] = 1.0    # cos(theta)
+                P[idx + 5] = 0.0    # sin(theta)
+
+            # Fill used obstacles (oriented rectangles)
+            for j, o in enumerate(obstacles[: self.max_obstacles]):
+                idx = 7 + 6 * j
+                P[idx] = float(o.cx)
+                P[idx + 1] = float(o.cy)
+                P[idx + 2] = float(max(o.hx, 0.0))
+                P[idx + 3] = float(max(o.hy, 0.0))
+                th = float(getattr(o, "theta", 0.0))
+                P[idx + 4] = float(np.cos(th))
+                P[idx + 5] = float(np.sin(th))
+
+            # prev control (no slew constraint on first plan)
+            prev_control_idx = 7 + 6 * self.max_obstacles
+            P[prev_control_idx] = 0.0
+            P[prev_control_idx + 1] = 0.0
+
+            # Bounds
+            lbx_states = [-np.inf] * 4 * (N_plan + 1)
+            ubx_states = [np.inf] * 4 * (N_plan + 1)
+            lbx_controls = [-0.52, -1.0] * N_plan
+            ubx_controls = [0.52, 1.0] * N_plan
+            lbx_dt = [self.dt_min] * N_plan
+            ubx_dt = [self.dt_max] * N_plan
+
+            lbx = lbx_states + lbx_controls + lbx_dt
+            ubx = ubx_states + ubx_controls + ubx_dt
+            x0_init = ca.vertcat(X0.flatten(), U0.flatten(), DT0)
+
+            res = teb_solver(x0=x0_init, lbx=lbx, ubx=ubx, lbg=0, ubg=0, p=P)
+            res_x = np.array(res["x"]).flatten()
+
+            X_sol = res_x[: 4 * (N_plan + 1)].reshape(N_plan + 1, 4)
+            U_sol = res_x[4 * (N_plan + 1) : 4 * (N_plan + 1) + 2 * N_plan].reshape(N_plan, 2)
+            DT_sol = res_x[4 * (N_plan + 1) + 2 * N_plan :]
+
+            # Cache for warm-start
+            self._last_X, self._last_U, self._last_dt = X_sol, U_sol, DT_sol
+
+            # Optionally truncate when goal reached early
+            goal_tol_xy = float(teb_cfg.get("goal_tol_xy", 0.05))
+            goal_tol_yaw = float(teb_cfg.get("goal_tol_yaw", 0.10))
+            keep_settle = int(teb_cfg.get("keep_settle_steps", 5))
+
+            goal_reached_at = None
+            for k in range(N_plan + 1):
+                pos_err = float(np.hypot(X_sol[k, 0] - gx, X_sol[k, 1] - gy))
+                yaw_err = float(abs((X_sol[k, 2] - gyaw + np.pi) % (2 * np.pi) - np.pi))
+                if pos_err < goal_tol_xy and yaw_err < goal_tol_yaw:
+                    goal_reached_at = k
+                    break
+
+            if goal_reached_at is not None and goal_reached_at < (N_plan - keep_settle - 1):
+                trunc = min(goal_reached_at + keep_settle, N_plan)
+                X_sol = X_sol[: trunc + 1]
+                U_sol = U_sol[: trunc]
+                DT_sol = DT_sol[: trunc]
+
+            ref_traj = ReferenceTrajectory.from_teb_solution(
+                states=X_sol[:-1],   # N states for N controls
+                controls=U_sol,
+                dt_array=DT_sol,
+                metadata={
+                    "profile": profile,
+                    "planner_horizon": N_plan,
+                    "phase": current_phase.value,
+                },
+            )
+
+            print(f"[TEB PLANNER] ✓ Planning succeeded: steps={ref_traj.n_steps}, total_time={ref_traj.total_time:.2f}s")
+            return ref_traj
+
+        except Exception as e:
+            print(f"[TEB PLANNER] Planning failed: {e}")
+            return ReferenceTrajectory(
+                states=np.zeros((1, 4)),
+                controls=np.zeros((1, 2)),
+                dt_array=np.array([0.0]),
+                total_time=0.0,
+                n_steps=1,
+                success=False,
+                metadata={"error": str(e)},
             )
         finally:
-            # Restore original state
-            self.enable_teb = original_enable_teb
-            self.N = original_N
-            self.w_time = original_w_time
-            self.dt_min = original_dt_min
-            self.dt_max = original_dt_max
+            # Restore runtime knobs
             self.w_goal_xy = original_w_goal_xy
             self.w_goal_theta = original_w_goal_theta
-            print(f"[TEB PLANNER] Restored: TEB={self.enable_teb}, horizon={self.N}")
+            self.dt_min = original_dt_min
+            self.dt_max = original_dt_max
+            self.w_time = original_w_time
+            self.enable_teb = original_enable_teb
+            self.N = original_N
 
     def track_trajectory(self, state: VehicleState, reference: ReferenceTrajectory,
                         obstacles: List[Obstacle], step: int, profile: str = "parallel") -> MPCSolution:
@@ -1194,9 +1303,39 @@ class TEBMPC:
             # Use standard solve() for final approach
             return self.solve(state, goal, obstacles, profile)
 
-        # Use next reference waypoint as "goal" for MPC
-        # This creates a moving goal that MPC tracks
-        next_ref_state = ref_states[min(5, len(ref_states)-1)]  # Look 5 steps ahead (0.5s)
+        lookahead_s = 0.5
+
+        # Reduce lookahead near obstacles so MPC doesn't "cut corners" into the neighbor cars
+        if obstacles:
+            min_clear = np.inf
+            for o in obstacles[:self.max_obstacles]:
+                r = self._obstacle_radius(o)
+                d = np.hypot(state.x - o.cx, state.y - o.cy) - (r + self.circle_radius)
+                if d < min_clear:
+                    min_clear = d
+
+            if min_clear < 0.35:
+                lookahead_s = 0.25
+            elif min_clear < 0.60:
+                lookahead_s = 0.35
+
+        if ref_dt is not None and len(ref_dt) > 0 and len(ref_states) > 1:
+            t = 0.0
+            target_idx = len(ref_states) - 1
+
+            # ref_dt[i] is the time from ref_states[i] -> ref_states[i+1]
+            # Ensure we don't iterate past the available states or dt values
+            for i in range(min(len(ref_dt), len(ref_states) - 1)):
+                t += float(ref_dt[i])
+                if t >= lookahead_s:
+                    target_idx = i + 1
+                    break
+        else:
+            # Fallback: roughly 0.5s if dt is approx 0.1s
+            target_idx = min(5, len(ref_states) - 1)
+
+        next_ref_state = ref_states[target_idx]
+
         goal = ParkingGoal(
             x=next_ref_state[0],
             y=next_ref_state[1],
@@ -1211,5 +1350,7 @@ class TEBMPC:
         sol.info["tracking_mode"] = True
         sol.info["reference_step"] = step
         sol.info["reference_goal"] = [goal.x, goal.y, goal.yaw]
+        sol.info["lookahead_s"] = lookahead_s
+        sol.info["lookahead_ref_idx"] = int(target_idx)
 
         return sol

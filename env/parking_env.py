@@ -183,10 +183,10 @@ class ParkingEnv:
         if collision:
             done = True
             info["termination"] = "collision"
-        if success:
+        elif success:
             done = True
             info["termination"] = "success"
-        if self.step_count >= self.max_steps:
+        elif self.step_count >= self.max_steps:
             done = True
             info["termination"] = "max_steps"
 
@@ -202,11 +202,16 @@ class ParkingEnv:
         x_ra, y_ra, yaw, v = state
         gx, gy, gyaw = self.goal
 
+        # --- success tolerances (override via parking: {success: {...}} in config) ---
+        success_cfg = (self.parking_cfg.get("success", {}) or {})
+        v_tol = float(success_cfg.get("v_tol", 0.06))
+        yaw_tol = float(success_cfg.get("yaw_tol", 0.08))
+
         # --- common yaw + speed check ---
         yaw_err = abs(((gyaw - yaw + np.pi) % (2 * np.pi)) - np.pi)
-        if abs(v) > 0.05:  # must be (almost) stopped
+        if abs(v) > v_tol:  # must be (almost) stopped
             return False
-        if yaw_err > 0.05:  # ~2.9 degrees
+        if yaw_err > yaw_tol:
             return False
 
         bay_cfg = self.parking_cfg.get("bay", {})
@@ -222,19 +227,22 @@ class ParkingEnv:
 
         if abs(bay_yaw) < 0.3:
             # -------- PARALLEL: center-based success --------
-            slot_cx = 0.0
-            slot_cy = float(bay_cfg.get("center_y", 0.13))
+            slot_cx = float(getattr(self, "bay_center", (0.0, float(bay_cfg.get("center_y", 0.13))))[0])
+            slot_cy = float(getattr(self, "bay_center", (0.0, float(bay_cfg.get("center_y", 0.13))))[1])
 
             along_err = abs(cx - slot_cx)
             lateral_err = abs(cy - slot_cy)
 
             # stricter tolerances → car ends really centred & deep
-            return (along_err < 0.03) and (lateral_err < 0.03)
+            along_tol = float(success_cfg.get("parallel_along_tol", 0.06))
+            lateral_tol = float(success_cfg.get("parallel_lateral_tol", 0.06))
+            return (along_err < along_tol) and (lateral_err < lateral_tol)
 
         else:
             # -------- PERPENDICULAR: keep simple rear-axle check --------
             pos_err = np.hypot(gx - x_ra, gy - y_ra)
-            return pos_err < 0.08
+            perp_pos_tol = float(success_cfg.get("perp_pos_tol", 0.08))
+            return pos_err < perp_pos_tol
 
     def _out_of_bounds(self, state):
         """Treat leaving the world rectangle as a collision."""
