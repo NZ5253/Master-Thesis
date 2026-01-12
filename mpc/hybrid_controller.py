@@ -243,18 +243,26 @@ class HybridController:
         # Increment tracking count
         self.state.tracking_count += 1
 
-        # NEW: dt-consistent playback of the reference
+        # NEW: dt-consistent playback of the reference (fixed to allow completion)
         ref = self.state.reference
         if ref is not None and ref.dt_array is not None and len(ref.dt_array) > 0:
             self.state.ref_step_time_left -= self.dt
 
-            # Advance ref index only when we have "spent" the step's dt
-            while self.state.ref_step_time_left <= 0.0 and self.state.current_step < (ref.n_steps - 1):
+            # Advance index while we've consumed the time for the current ref step
+            while self.state.ref_step_time_left <= 0.0 and self.state.current_step < ref.n_steps:
                 self.state.current_step += 1
-                self.state.ref_step_time_left += float(ref.dt_array[self.state.current_step])
+                if self.state.current_step < ref.n_steps:
+                    # dt_array is indexed by step; guard length just in case
+                    i = min(self.state.current_step, len(ref.dt_array) - 1)
+                    self.state.ref_step_time_left += float(ref.dt_array[i])
         else:
             # Fallback: if dt_array missing, step each tick (old behavior)
             self.state.current_step += 1
+
+        # If reference is now exhausted, switch modes immediately
+        if self.state.current_step >= ref.n_steps:
+            self.state.mode = "final_convergence"
+            return self._final_convergence(state, goal, obstacles, profile)
 
         # Diagnostics
         pos_err = np.sqrt((state.x - goal.x)**2 + (state.y - goal.y)**2)
