@@ -1,0 +1,42 @@
+# =========================
+# parking-rl: MPC + RL deps
+# =========================
+
+# ---- Core numerics / config ----
+# IMPORTANT: numpy must be <2.0 for Ray RLlib 2.9.x compatibility
+numpy>=1.23,<2.0
+scipy>=1.10,<1.14
+pyyaml>=6.0
+packaging>=23.0
+
+# ---- RL environment + training ----
+gymnasium>=0.29,<1.1
+cloudpickle>=2.2
+tqdm>=4.65
+matplotlib>=3.7
+
+# ---- Ray RLlib for PPO training ----
+# RLlib 2.9.0 matches RL_APS repository
+ray[rllib]>=2.9.0,<2.10
+# Ray 2.9.x requires specific pyarrow and numpy versions
+pyarrow>=12.0.0,<15.0.0
+protobuf>=3.20,<5.0
+
+# ---- PyTorch (CPU default) ----
+# If you want CUDA, install torch separately using the official command for your CUDA version.
+torch>=2.1,<2.4
+
+# Optional logging (nice to have)
+tensorboard>=2.14
+# wandb>=0.16
+
+# ---- MPC / optimization (CasADi NMPC) ----
+casadi>=3.6.5,<3.7
+
+# ---- Optional: saving videos / debugging ----
+# imageio>=2.31
+# opencv-python>=4.8
+
+# ---- Optional: dev tools ----
+# pytest>=7.4
+

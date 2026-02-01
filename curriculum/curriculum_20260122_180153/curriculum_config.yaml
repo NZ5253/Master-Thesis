@@ -1,0 +1,306 @@
+# Curriculum Learning Configuration for Parallel Parking RL
+# Progressive difficulty matching MPC Phase structure
+
+curriculum:
+  # ============================================================
+  # PHASE 1: Foundation - Fixed spawn, fixed bay (EASIEST)
+  # ============================================================
+  phase1_foundation:
+    name: "Phase 1: Foundation - Fixed Everything"
+    description: "Learn basic parking with no randomization. Car always spawns at same position, bay is fixed."
+
+    timesteps: 150000000  # 15M steps
+    success_threshold: 0.85  # 85% success rate to advance
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x: 0.0          # Fixed X
+            center_y: 0.13         # Fixed Y
+            yaw: 0.0               # Fixed yaw
+            # NO randomization ranges
+
+        spawn_lane:
+          # Fixed spawn position (no randomization)
+          y_offset_from_bay: 0.83
+          y_jitter: 0.0            # No jitter
+          yaw: 0.0
+          yaw_jitter: 0.0          # No jitter
+          x_min_offset: 1.20       # Fixed distance
+          x_max_offset: 1.20       # Same as min = no randomization
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.0        # Fixed neighbors
+          random:
+            num_min: 0
+            num_max: 0             # No random obstacles
+
+  # ============================================================
+  # PHASE 2: Random Spawn - Bay still fixed
+  # ============================================================
+  phase2_random_spawn:
+    name: "Phase 2: Random Spawn Position"
+    description: "Bay is fixed, but spawn position varies (x, y, yaw). Learn to approach from different angles."
+
+    timesteps: 40000000  # 40M steps
+    success_threshold: 0.80  # 85% success (harder due to randomization)
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x: 0.0          # Still fixed
+            center_y: 0.13         # Still fixed
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.30           # ±30cm lateral (start conservative)
+          yaw: 0.0
+          yaw_jitter: 0.35         # ±20° yaw (0.35 rad)
+          x_min_offset: 0.80       # Wider range
+          x_max_offset: 1.60
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.0        # Neighbors still fixed
+          random:
+            num_min: 0
+            num_max: 0
+
+  # ============================================================
+  # PHASE 3: Random Bay X Position - Spawn varies
+  # ============================================================
+  phase3_random_bay_x:
+    name: "Phase 3: Random Bay X Position"
+    description: "Bay can shift left/right. Spawn still varies. Goal calculation must adapt."
+
+    timesteps: 50000000  # 50M steps
+    success_threshold: 0.75  # 80% success
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.25    # Bay can shift ±25cm
+            center_x_max: 0.25
+            center_y: 0.13         # Y still fixed
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.35           # Increase jitter slightly
+          yaw: 0.0
+          yaw_jitter: 0.40         # ±23°
+          x_min_offset: 0.70
+          x_max_offset: 1.70
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.0
+          random:
+            num_min: 0
+            num_max: 0
+
+  # ============================================================
+  # PHASE 4: Random Bay Y Position - Full bay randomization
+  # ============================================================
+  phase4_random_bay_full:
+    name: "Phase 4: Full Bay Randomization"
+    description: "Bay can be anywhere (X and Y). Spawn varies widely. Must generalize to any bay position."
+
+    timesteps: 550000000  # 30M steps (harder)
+    success_threshold: 0.70  # 75% success
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.30
+            center_x_max: 0.30
+            center_y_min: -0.10    # Bay Y can vary
+            center_y_max: 0.35
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.40           # Full jitter
+          yaw: 0.0
+          yaw_jitter: 0.52         # ±30° full range
+          x_min_offset: 0.60
+          x_max_offset: 1.80
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.0        # Still no neighbor jitter
+          random:
+            num_min: 0
+            num_max: 0
+
+  # ============================================================
+  # PHASE 5: Neighbor Jitter - Add neighbor randomization
+  # ============================================================
+  phase5_neighbor_jitter:
+    name: "Phase 5: Neighbor Position Jitter"
+    description: "Neighbors have random ±5cm jitter. Must handle tight/wide gaps."
+
+    timesteps: 60000000  # 35M steps
+    success_threshold: 0.65  # 70% success
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.30
+            center_x_max: 0.30
+            center_y_min: -0.10
+            center_y_max: 0.35
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.40
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.60
+          x_max_offset: 1.80
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.05       # ±5cm neighbor jitter
+          random:
+            num_min: 0
+            num_max: 0
+
+  # ============================================================
+  # PHASE 6: Random Obstacles - Full challenge (HARDEST)
+  # ============================================================
+  phase6_random_obstacles:
+    name: "Phase 6: Random Obstacles in Environment"
+    description: "Full randomization + random obstacles. Maximum difficulty."
+
+    timesteps: 650000000  # 40M steps
+    success_threshold: 0.60  # 65% success (hardest phase)
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.30
+            center_x_max: 0.30
+            center_y_min: -0.10
+            center_y_max: 0.35
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.40
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.60
+          x_max_offset: 1.80
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.05
+          random:
+            num_min: 0
+            num_max: 2             # Up to 2 random obstacles
+            x_range: [-1.5, 1.5]
+            y_range: [-1.5, 1.5]
+            w_range: [0.15, 0.30]
+            h_range: [0.15, 0.30]
+            min_distance_to_goal: 0.50
+            min_distance_to_spawn: 0.40
+
+# ============================================================
+# Training Configuration per Phase
+# ============================================================
+training_config:
+  # Phase 1: Foundation - Higher learning rate, more exploration
+  phase1_foundation:
+    lr: 5e-4                    # Higher LR for faster initial learning
+    entropy_coeff: 0.02         # More exploration
+    train_batch_size: 4000
+    num_sgd_iter: 10
+    eval_interval: 5            # Evaluate frequently (should learn fast)
+
+  # Phase 2: Random Spawn - Standard settings
+  phase2_random_spawn:
+    lr: 3e-4
+    entropy_coeff: 0.015
+    train_batch_size: 4000
+    num_sgd_iter: 10
+    eval_interval: 10
+
+  # Phase 3: Random Bay X - Standard
+  phase3_random_bay_x:
+    lr: 3e-4
+    entropy_coeff: 0.01
+    train_batch_size: 4000
+    num_sgd_iter: 10
+    eval_interval: 10
+
+  # Phase 4: Random Bay Full - More exploration needed
+  phase4_random_bay_full:
+    lr: 3e-4
+    entropy_coeff: 0.015        # Slightly more exploration
+    train_batch_size: 6000      # Larger batch for stability
+    num_sgd_iter: 12
+    eval_interval: 10
+
+  # Phase 5: Neighbor Jitter - Fine-tuning
+  phase5_neighbor_jitter:
+    lr: 2e-4                    # Lower LR for fine-tuning
+    entropy_coeff: 0.01
+    train_batch_size: 6000
+    num_sgd_iter: 12
+    eval_interval: 10
+
+  # Phase 6: Random Obstacles - Most careful learning
+  phase6_random_obstacles:
+    lr: 2e-4                    # Lower LR
+    entropy_coeff: 0.02         # More exploration for obstacles
+    train_batch_size: 8000      # Larger batch for diversity
+    num_sgd_iter: 15            # More updates per batch
+    eval_interval: 10
+
+# ============================================================
+# Curriculum Progression Settings
+# ============================================================
+progression:
+  # How to evaluate if ready to advance to next phase
+  evaluation_episodes: 10       # Evaluate on 20 episodes
+  consecutive_successes: 5     # Must pass threshold 5 times in a row
+
+  # Checkpoint management
+  save_phase_checkpoints: true  # Save checkpoint at end of each phase
+  keep_best_only: false         # Keep all phase checkpoints
+
+  # Early stopping
+  max_timesteps_per_phase: null  # No hard limit (use timesteps from phase config)
+  patience: 5                    # If no improvement for 5 evals, advance anyway
+
+  # Warm start
+  warm_start: true              # Load previous phase weights when advancing
+  reset_optimizer: false        # Keep optimizer state across phases

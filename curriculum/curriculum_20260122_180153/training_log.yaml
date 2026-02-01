@@ -1,0 +1,12 @@
+- best_reward: 285631.32407031517
+  best_success_rate: 0.9
+  checkpoint: checkpoints/curriculum/curriculum_20260122_180153/phase2_random_spawn/final_checkpoint
+  phase: phase2_random_spawn
+  status: SUCCESS
+  timesteps: 177655800
+- best_reward: 235654.4384201535
+  best_success_rate: 0.9
+  checkpoint: checkpoints/curriculum/curriculum_20260122_180153/phase3_random_bay_x/final_checkpoint
+  phase: phase3_random_bay_x
+  status: SUCCESS
+  timesteps: 101341800

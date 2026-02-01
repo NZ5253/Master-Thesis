@@ -1,0 +1,82 @@
+# config_env.yaml
+vehicle:
+  length: 0.36
+  width: 0.26
+  wheelbase: 0.25
+  max_steer: 0.523
+  max_steer_rate: 0.5
+  max_vel: 1.0
+  max_acc: 1.0
+
+dt: 0.1
+max_steps: 300
+
+world:
+  width: 4.0
+  height: 4.0
+
+scenarios:
+  # 1. PERPENDICULAR
+  perpendicular:
+    parking:
+      bay:
+        center_y: 0.0          # bay row is at y = 0
+        yaw: 1.5708            # 90° (upright car in the bay)
+    spawn_lane:
+      # Car starts below the bays, driving along +x (from left side)
+      y_min: -1.6
+      y_max: -1.3
+      yaw: 0.0                 # car heading along +x
+      x_min_offset: -1.3       # start on the LEFT of goal
+      x_max_offset: -0.9       # closer to centre but still left
+    success:
+        v_tol: 0.06
+        yaw_tol: 0.08
+        perp_pos_tol: 0.08
+    obstacles:
+      world: {x_min: -2.0, x_max: 2.0, y_min: -2.0, y_max: 2.0}
+      neighbor:
+        w: 0.36                # car width (across bay)
+        h: 0.26                # car length (into bay)
+        offset: 0.40           # left/right distance from bay center
+        pos_jitter: 0.0        # NO randomness for now
+      random: {num_min: 0, num_max: 0}  # disable random obstacles
+
+    # 2. PARALLEL (keep whatever you already have working)
+  parallel:
+    parking:
+      bay:
+        center_x: 0.0          # Default X center (used if no randomization)
+        center_x_min: -0.3     # Phase 2.1: Random X range
+        center_x_max: 0.3      # Phase 2.1: Bay can shift left/right
+        center_y: 0.13         # Default center (used if no randomization)
+        center_y_min: -0.2     # Phase 4: Random Y range
+        center_y_max: 0.4      # Phase 4: Wider safe range
+        yaw: 0.0
+
+    # --- Point B: Approach entry point ---
+    # Phase 4: B is calculated RELATIVE to bay_center
+    approach_pose:
+      y_offset_from_bay: 0.83  # B is 0.83m above bay center (was: y=0.96 with bay at 0.13)
+      yaw: 0.0
+      x_offset: 1.00   # B is 1.0m ahead of goal_x (rear-axle goal)
+
+    spawn_lane:
+      # Phase 2.2: Random spawn (x, y, yaw) - relative to bay_center
+      y_offset_from_bay: 0.83  # Center Y position (0.83m above bay)
+      y_jitter: 0.40           # ±40cm lateral variation (range: 0.43-1.23m from bay)
+      yaw: 0.0                 # Center yaw (parallel to road)
+      yaw_jitter: 0.52         # ±30° yaw variation (0.52 rad = 30°)
+      x_min_offset: 0.60       # 60cm ahead minimum
+      x_max_offset: 1.80       # 180cm ahead maximum (wider for random spawn)
+
+    success:
+        v_tol: 0.15                    # 15cm/s velocity (relaxed for Phase 1)
+        yaw_tol: 0.15                  # 8.5° yaw tolerance (relaxed for Phase 1)
+        parallel_along_tol: 0.15       # 15cm along tolerance (relaxed for RL training)
+        parallel_lateral_tol: 0.15     # 15cm lateral tolerance (relaxed for RL training)
+
+    obstacles:
+      world: {x_min: -2.0, x_max: 2.0, y_min: -2.0, y_max: 2.0}
+      neighbor: {w: 0.36, h: 0.26, offset: 0.54, pos_jitter: 0.05}
+      random: {num_min: 0, num_max: 0}

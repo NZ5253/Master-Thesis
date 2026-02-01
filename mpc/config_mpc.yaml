@@ -1,0 +1,199 @@
+# mpc/config_mpc.yaml
+# Only MPC-specific settings. Vehicle + world + dt come from config_env.yaml.
+
+mpc:
+  # Horizon / solver
+  horizon_steps: 80       # 8.0s horizon (original working config)
+  max_iter: 200
+
+  # Global weights (defaults)
+  w_goal_xy: 80.0
+  w_goal_theta: 80.0
+  w_goal_v: 0.5
+
+  # Control effort + smoothing
+  w_steer: 1.0
+  w_accel: 0.1
+  w_smooth_steer: 0.01
+  w_smooth_accel: 0.02
+
+  # Obstacle / collision cost
+  w_collision: 40.0
+  alpha_obs: 3.5
+
+  # World boundary penalty (stay inside 4x4 box)
+  w_boundary: 30.0
+  boundary_margin: 0.2
+
+  # Default reverse penalty (profile can override)
+  w_reverse_penalty: 0.1
+
+  # Circle–rectangle collision geometry (used by teb_mpc.py)
+  obs_inflate: 0.01          # inflate obstacle rectangles minimally - allow deeper entry
+  collision_margin: 0.00     # extra clearance for ego circles (meters). start at 0
+
+
+  # ============================================================================
+  # TIME-ELASTIC BAND (TEB) CONFIGURATION
+  # ============================================================================
+  # TEB makes time intervals between waypoints into optimization variables,
+  # allowing the trajectory to speed up in safe areas and slow down near obstacles.
+  # Set enable_teb: false to use fixed-dt MPC (baseline)
+  # ============================================================================
+  teb:
+    enable: false             # DISABLED - Fixed-dt MPC has fewer oscillations (see TEB_OSCILLATION_ANALYSIS.md)
+
+    # Time interval bounds - Original baseline settings
+    dt_min: 0.08              # Minimum time step (80ms)
+    dt_max: 0.12              # Maximum time step (120ms)
+    dt_init: 0.10             # Initial guess (100ms)
+
+    # Temporal cost weights - Conservative baseline
+    w_time: 0.0               # NO time pressure
+    w_dt_smooth: 0.0          # DISABLED - let optimizer choose dt freely
+    w_dt_obstacle: 0.0        # DISABLED
+    w_dt_precision: 0.0       # DISABLED - baseline without precision penalty
+    w_velocity_dt_coupling: 0.0  # DISABLED
+
+    # Constraints
+    max_total_time: 12.0      # Maximum total trajectory time (seconds)
+    temporal_smoothness_bound: 0.15  # Max dt change between consecutive steps
+
+  # Scenario-specific profile overrides
+  profiles:
+
+    approach:
+      # Approach A->B: simple, smooth, no fear of reversing
+      w_goal_xy: 250.0
+      w_goal_theta: 60.0
+      w_goal_v: 0.05
+
+      w_steer: 0.08
+      w_accel: 0.03
+      w_smooth_steer: 0.002
+      w_smooth_accel: 0.004
+
+      w_slew_rate_steer: 0.2
+      w_slew_rate_accel: 0.1
+
+      w_collision: 25.0
+      w_reverse_penalty: 0.0
+      w_gear_change: 0.0
+
+    # Phase 2.2: Aggressive approach for initial A->B navigation
+    approach_aggressive:
+      # Higher goal weights for faster convergence from far away
+      w_goal_xy: 350.0          # Stronger pull (was 250.0)
+      w_goal_theta: 80.0        # Stronger yaw correction (was 60.0)
+      w_goal_v: 0.05
+
+      w_steer: 0.10             # Slightly more steering effort
+      w_accel: 0.04
+      w_smooth_steer: 0.003
+      w_smooth_accel: 0.005
+
+      w_slew_rate_steer: 0.25
+      w_slew_rate_accel: 0.12
+
+      w_collision: 25.0
+      w_reverse_penalty: 0.0
+      w_gear_change: 0.0
+
+    # Phase 2.2: Settle approach for final convergence to B
+    approach_settle:
+      # Lower weights for smooth, precise arrival at B
+      w_goal_xy: 200.0          # Gentler pull (was 250.0)
+      w_goal_theta: 50.0        # Gentler yaw (was 60.0)
+      w_goal_v: 0.08            # Slightly higher velocity penalty for smoother stop
+
+      w_steer: 0.06             # Lower steering effort for smoothness
+      w_accel: 0.02
+      w_smooth_steer: 0.001     # Very smooth
+      w_smooth_accel: 0.003
+
+      w_slew_rate_steer: 0.15   # Lower commitment penalty
+      w_slew_rate_accel: 0.08
+
+      w_collision: 25.0
+      w_reverse_penalty: 0.0
+      w_gear_change: 0.0
+
+    parallel:
+      # ============================================================================
+      # COLLISION-SAFE EXPONENTIAL DEPTH REWARD CONFIGURATION
+      # ============================================================================
+      # Performance (10 episodes):
+      #   - Average depth: 2.40 cm (range: 2.23-2.51 cm)
+      #   - Success rate: 100%
+      #   - Avg steering changes in settling: 2.1 (previous: 5)
+      #   - Settling duration: ~34 steps
+      #   - Final yaw error: ~1.5°
+      #
+      # Key features:
+      #   1. Exponential depth reward: Aggressive pull in final centimeters
+      #   2. Phase-aware coupling: Strong in entry (prevents collisions),
+      #      reduced in final (allows precision)
+      #   3. Monotonic depth constraint: Prevents backing out
+      # ============================================================================
+
+      # --- Core MPC Weights ---
+      w_goal_xy: 400.0           # Base goal attraction (multiplied by lateral/depth weights)
+      w_goal_theta: 120.0        # Yaw alignment
+      w_goal_v: 3.0              # Velocity cost - INCREASED 30x to force stopping (was 0.1)
+      w_steer: 0.03              # Steering effort - REDUCED to allow heavier steering (was 0.1)
+      w_accel: 0.05              # Acceleration effort
+      w_smooth_steer: 0.0008     # Steering smoothness - REDUCED to allow bold corrections (was 0.0015)
+      w_smooth_accel: 0.003      # Acceleration smoothness (within horizon)
+      w_slew_rate_steer: 0.2     # Commitment penalty - REDUCED to allow aggressive S-maneuver (was 0.5)
+      w_slew_rate_accel: 0.2     # NEW: Commitment penalty - VERY WEAK
+      w_reverse_penalty: 0.12
+      w_gear_change: 0.0         # DISABLED
+      w_braking_zone: 0.0        # DISABLED
+      w_terminal_velocity: 0.0   # DISABLED
+      w_steering_precision: 0.0  # DISABLED
+      w_monotonic_final: 0.0     # DISABLED
+      w_collision: 33.0          # Keep original - wide arc gives better depth (was reduced to 26.0)
+
+      # --- Parallel Parking Cost Function Weights ---
+      lateral_weight: 0.30        # Lateral centering (increased from 0.25 to reduce drift)
+      depth_penalty_weight: 4.0   # Strong penalty for backing out (monotonic depth)
+      yaw_weight: 0.9             # Yaw alignment (straightening)
+
+      # --- Enhanced Depth Reward ---
+      # reward = -linear*err + -quadratic*err²*exp(-factor*err²)
+      # TESTED CONFIG: Balanced depth pull (tested: 83% success at 1.60m spawn)
+      depth_reward_linear: 0.07       # Tested working value
+      depth_reward_quadratic: 0.80    # Tested working value
+      proximity_exp_factor: 35.0      # BROADER activation for earlier depth commitment
+
+      # --- Phase Detection Thresholds ---
+      # FINAL_ALIGN phase: depth < threshold AND yaw < threshold
+      # Smooth activation using linear fade-in over range
+      final_align_depth_threshold: 0.10    # 10cm depth threshold
+      final_align_depth_range: 0.05        # 5cm fade-in (5-10cm)
+      final_align_yaw_threshold: 0.1745    # 10° yaw threshold (radians)
+      final_align_yaw_range: 0.2094        # 12° fade-in (radians)
+
+      # --- Speed-Steering Coupling (Phase-Aware) ---
+      # Coupling prevents aggressive steering at high speeds
+      # Moderate in entry → allow bold S-maneuver steering
+      # Reduced in final → allows precise alignment
+      coupling_entry: 0.6              # Entry phase coupling - REDUCED to allow heavier steering (was 0.9)
+      coupling_reduction: 0.5          # Reduction factor for final phase
+      # Effective final coupling: 0.6 * (1 - 0.5) = 0.30
+
+      # --- Speed Limit ---
+      max_comfortable_speed: 0.14      # Maximum speed (m/s)
+      speed_excess_weight: 1.8         # Penalty for exceeding speed
+
+    perpendicular:
+      # Smooth perpendicular parking
+      w_goal_xy: 200.0         # Match parallel for consistency
+      w_goal_theta: 100.0      # Match parallel for consistency
+      w_goal_v: 1.0
+      w_steer: 0.3
+      w_accel: 0.1
+      w_smooth_steer: 1.0      # Strong smoothing
+      w_smooth_accel: 0.4
+      w_reverse_penalty: 0.08
+      w_collision: 35.0        # Slightly higher for tighter spaces
