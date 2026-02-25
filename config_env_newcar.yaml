@@ -1,0 +1,93 @@
+# config_env_newcar.yaml
+# =========================================================
+# Environment Configuration for NEW Car (larger, 18deg steer)
+# =========================================================
+#
+# Measured dimensions:
+#   Length: 0.15m, Width: 0.10m, Wheelbase: 0.113m
+#   Max steer: 18 deg = 0.314 rad
+#   rear_overhang: (0.15 - 0.113) / 2 = 0.0185m
+#   dist_to_center: 0.15/2 - 0.0185 = 0.0565m
+#
+# TWO scale factors (because max_steer differs: 0.314 vs 0.523 rad):
+#   body_scale     = 0.452  (wheelbase ratio 0.113/0.25)
+#   maneuver_scale = 0.801  (turning-radius ratio 0.348/0.434)
+#
+# Original (full-scale) values for reference:
+#   length=0.36, width=0.26, wheelbase=0.25, max_steer=0.523
+#   rear_overhang=0.05, dist_to_center=0.13
+#   R_orig   = 0.25/tan(0.523)  = 0.434m
+#   R_newcar = 0.113/tan(0.314) = 0.348m
+#
+# Friction model: baked into training to close sim-to-real gap.
+#   static_friction=0.15:  policy must command >0.15 m/s^2 to start
+#   kinetic_friction=0.05: gentle natural deceleration when coasting
+# =========================================================
+
+vehicle:
+  length: 0.15
+  width: 0.10
+  wheelbase: 0.113
+  rear_overhang: 0.0185          # (L - wheelbase) / 2
+                                 # -> dist_to_center = 0.15/2 - 0.0185 = 0.0565
+
+  max_steer: 0.314               # 18 deg (from CRS config)
+  max_steer_rate: 0.5
+  max_vel: 0.5
+  max_acc: 0.5
+
+  # Friction model (sim-to-real): teaches policy that tiny accels don't move car
+  static_friction: 0.15          # m/s^2 — dead zone at standstill
+  kinetic_friction: 0.05         # m/s^2 — opposes motion when moving
+
+dt: 0.1
+max_steps: 300
+
+world:
+  width: 2.5
+  height: 2.5
+
+scenarios:
+  parallel:
+    parking:
+      bay:
+        center_x: 0.0
+        center_x_min: -0.113          # -0.25 * 0.452 (body_scale)
+        center_x_max: 0.113
+        center_y: 0.059               # 0.13 * 0.452 (body_scale)
+        center_y_min: -0.045          # -0.10 * 0.452
+        center_y_max: 0.158           # 0.35 * 0.452
+        yaw: 0.0
+        # Bay geometry for reward in_bay check
+        length: 0.15                  # Same as vehicle length
+        width: 0.249                  # 0.55 * 0.452 (body_scale)
+
+    approach_pose:
+      y_offset_from_bay: 0.665       # 0.83 * 0.801 (maneuver_scale)
+      yaw: 0.0
+      x_offset: 0.801                # 1.0 * 0.801 (maneuver_scale)
+
+    spawn_lane:
+      y_offset_from_bay: 0.665       # 0.83 * 0.801 (maneuver_scale)
+      y_jitter: 0.320                # 0.40 * 0.801 (maneuver_scale)
+      yaw: 0.0
+      yaw_jitter: 0.52               # Unchanged (angle)
+      x_min_offset: 0.481            # 0.60 * 0.801 (maneuver_scale)
+      x_max_offset: 1.442            # 1.80 * 0.801 (maneuver_scale)
+
+    success:
+      v_tol: 0.05
+      yaw_tol: 0.087
+      parallel_along_tol: 0.027      # 0.06 * 0.452 (body_scale)
+      parallel_lateral_tol: 0.027
+
+    obstacles:
+      world: {x_min: -1.25, x_max: 1.25, y_min: -1.25, y_max: 1.25}
+      neighbor:
+        w: 0.15                       # Vehicle length (body_scale)
+        h: 0.10                       # Vehicle width
+        offset: 0.244                 # 0.54 * 0.452 (body_scale)
+        pos_jitter: 0.023             # 0.05 * 0.452 (body_scale)
+        curb_gap: 0.023               # 0.05 * 0.452 (body_scale)
+        curb_thickness: 0.018         # 0.04 * 0.452 (body_scale)
+      random: {num_min: 0, num_max: 0}

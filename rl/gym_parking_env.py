@@ -105,6 +105,13 @@ class GymParkingEnv(gym.Env):
             self.action_smooth_w = 0.0
         self._prev_action_scaled = None
 
+        # Early termination when "settled" - car stops moving when parked well
+        self.early_termination_enabled = bool(reward_cfg.get("early_termination_enabled", True))
+        self.settled_steps_required = int(reward_cfg.get("settled_steps_required", 5))  # N steps to confirm settled
+        self.settling_v_threshold = float(reward_cfg.get("settling_v_threshold", 0.015))
+        self.settling_steer_threshold = float(reward_cfg.get("settling_steer_threshold", 0.08))
+        self._settled_counter = 0
+
         # Episode tracking
         self.episode_step = 0
         self.episode_reward = 0.0
@@ -141,6 +148,7 @@ class GymParkingEnv(gym.Env):
         self._last_info = info
         self.episode_reward = 0.0
         self._prev_action_scaled = None
+        self._settled_counter = 0
 
         return obs, info
 
@@ -213,6 +221,26 @@ class GymParkingEnv(gym.Env):
         # Gymnasium uses separate terminated and truncated flags
         terminated = termination in ["success", "collision"]
         truncated = termination == "max_steps"
+
+        # EARLY TERMINATION: If car is "settled" for N steps, end episode as success
+        # This prevents unnecessary oscillations after the car is already parked
+        if self.early_termination_enabled and not terminated and not truncated:
+            is_settled = reward_info.get("is_settled", False)
+            if is_settled:
+                self._settled_counter += 1
+                if self._settled_counter >= self.settled_steps_required:
+                    # Trigger early success!
+                    terminated = True
+                    termination = "success"
+                    env_info["termination"] = "success"
+                    env_info["success"] = True
+                    env_info["early_termination"] = True
+                    # Add success reward (already computed but let's ensure it's there)
+                    success_reward = float(self.config.get("reward", {}).get("success_reward", 200.0))
+                    reward += success_reward
+                    reward_info["early_success_bonus"] = success_reward
+            else:
+                self._settled_counter = 0  # Reset if not settled
 
         self._prev_action_scaled = scaled_action
         self.prev_state = self.env.state.copy()

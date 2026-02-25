@@ -1,0 +1,193 @@
+# curriculum_config_finetune_chronos.yaml
+# Fine-tuning curriculum for REAL ChronosCar dimensions
+#
+# Purpose: Adapt trained Phase 5 policy to real hardware dimensions
+# Expected duration: 5-10M timesteps (1-2 hours on GPU)
+#
+# Usage:
+#   python -m rl.train_curriculum \
+#       --config rl/curriculum_config_finetune_chronos.yaml \
+#       --checkpoint checkpoints/curriculum/curriculum_20260207_153829/phase5_neighbor_jitter/best_checkpoint
+
+# Global settings
+global:
+  config_env: "config_env_chronos.yaml"  # Use ChronosCar dimensions
+  scenario: "parallel"
+
+  # PPO hyperparameters (conservative for fine-tuning)
+  ppo:
+    lr: 5e-5                  # Lower LR for fine-tuning (was 1e-4)
+    gamma: 0.99
+    lambda_: 0.95
+    clip_param: 0.15          # Tighter clipping for stability
+    entropy_coeff: 0.003      # Same as Phase 5
+    vf_loss_coeff: 0.5
+    grad_clip: 0.5
+    num_sgd_iter: 12
+    sgd_minibatch_size: 512
+    train_batch_size: 6000
+
+  # Training settings
+  training:
+    num_workers: 4
+    num_envs_per_worker: 4
+    num_gpus: 1
+    framework: "torch"
+
+  # Evaluation
+  evaluation:
+    interval: 5               # Evaluate every 5 iterations
+    num_episodes: 50
+
+  # Checkpoint
+  checkpoint:
+    frequency: 10
+    keep_last: 3
+
+# Fine-tuning phases (shorter than original training)
+phases:
+  # Phase FT1: Adaptation to new dimensions (fixed bay, fixed spawn)
+  - name: "finetune_adapt"
+    description: "Adapt to ChronosCar dimensions with fixed scenario"
+    timesteps: 2_000_000
+    success_threshold: 0.80
+
+    env_overrides:
+      # Fixed bay and spawn for initial adaptation
+      randomize_bay: false
+      randomize_spawn: false
+      bay:
+        center_x: 0.0
+        center_y: 0.047
+        yaw: 0.0
+      spawn:
+        x: 0.36
+        y: 0.35
+        yaw: 0.0
+
+    reward_params:
+      success_reward: 200.0
+      collision_penalty: 200.0
+      timeout_penalty: 400.0
+      k_pot: 2.5
+      k_pos_progress: 1.5
+      k_lat_progress: 12.0
+      lat_w: 0.15
+      k_yaw_progress: 0.20
+      time_penalty: 0.008
+      distance_w: 0.05
+      bay_entry_bonus: 10.0
+      # Smoothness (from Phase 5)
+      action_smooth_w: 0.010
+      gear_switch_penalty: 0.8
+      steer_reversal_penalty: 0.6
+      # Settling
+      settling_bonus: 2.5
+      settling_v_threshold: 0.01
+      settling_steer_threshold: 0.05
+      unnecessary_movement_penalty: 1.0
+      early_termination_enabled: true
+      settled_steps_required: 5
+
+    tolerances:
+      along: 0.025             # ~2.5cm (scaled from 6cm)
+      lateral: 0.025
+      yaw: 0.087               # 5 degrees
+      velocity: 0.03
+
+  # Phase FT2: Random spawn (like Phase 2)
+  - name: "finetune_random_spawn"
+    description: "Random spawn positions"
+    timesteps: 3_000_000
+    success_threshold: 0.75
+
+    env_overrides:
+      randomize_bay: false
+      randomize_spawn: true
+      spawn_jitter:
+        y_jitter: 0.10         # Scaled from 0.25
+        yaw_jitter: 0.30
+        x_range: [0.22, 0.50]
+
+    reward_params:
+      # Same as FT1
+      success_reward: 200.0
+      collision_penalty: 200.0
+      timeout_penalty: 400.0
+      k_pot: 2.5
+      k_pos_progress: 1.5
+      k_lat_progress: 12.0
+      lat_w: 0.15
+      k_yaw_progress: 0.20
+      time_penalty: 0.008
+      distance_w: 0.05
+      bay_entry_bonus: 10.0
+      action_smooth_w: 0.010
+      gear_switch_penalty: 0.8
+      steer_reversal_penalty: 0.6
+      settling_bonus: 2.5
+      settling_v_threshold: 0.01
+      settling_steer_threshold: 0.05
+      unnecessary_movement_penalty: 1.0
+      early_termination_enabled: true
+      settled_steps_required: 5
+
+    tolerances:
+      along: 0.022
+      lateral: 0.022
+      yaw: 0.087
+      velocity: 0.03
+
+  # Phase FT3: Full randomization (like Phase 4)
+  - name: "finetune_full_random"
+    description: "Full bay and spawn randomization"
+    timesteps: 5_000_000
+    success_threshold: 0.70
+
+    env_overrides:
+      randomize_bay: true
+      randomize_spawn: true
+      bay_jitter:
+        x_range: [-0.08, 0.08]
+        y_range: [-0.03, 0.10]
+      spawn_jitter:
+        y_jitter: 0.144
+        yaw_jitter: 0.52
+        x_range: [0.22, 0.65]
+
+    # Neighbor cars with jitter
+    obstacles:
+      neighbor:
+        enabled: true
+        pos_jitter: 0.018
+
+    reward_params:
+      success_reward: 220.0
+      collision_penalty: 200.0
+      timeout_penalty: 400.0
+      k_pot: 2.5
+      k_pos_progress: 1.8
+      k_lat_progress: 14.0
+      lat_w: 0.18
+      k_yaw_progress: 0.25
+      time_penalty: 0.010
+      distance_w: 0.06
+      bay_entry_bonus: 12.0
+      action_smooth_w: 0.012
+      gear_switch_penalty: 1.0
+      steer_reversal_penalty: 0.8
+      settling_bonus: 3.0
+      settling_v_threshold: 0.008
+      settling_steer_threshold: 0.04
+      unnecessary_movement_penalty: 1.5
+      early_termination_enabled: true
+      settled_steps_required: 4
+
+    tolerances:
+      along: 0.020             # ~2cm tolerance
+      lateral: 0.020
+      yaw: 0.070               # 4 degrees
+      velocity: 0.025
+
+# Total: 10M timesteps
+# Expected training time: 1-2 hours on GPU

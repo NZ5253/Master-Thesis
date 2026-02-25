@@ -68,3 +68,12 @@ data/*.pkl
 
 # Archive (optional - comment out if you want to include)
 # archive/
+
+# CRS car original resources (1.2GB, too large for GitHub)
+chronoscar-main/
+
+# Training logs (auto-generated, large)
+log.txt
+
+# Local Claude configuration
+.claude/

@@ -37,6 +37,10 @@ class CurriculumManager:
         self.training_configs = self.curriculum["training_config"]
         self.progression = self.curriculum["progression"]
 
+        # Get base config path (defaults to config_env.yaml)
+        # Can be overridden in curriculum config with "base_config" key
+        self.base_config_path = self.curriculum.get("base_config", "config_env.yaml")
+
         # Phase order
         # Prefer the order defined in the YAML (insertion order). This prevents
         # referencing phases that are not present in rl/curriculum_config.yaml.
@@ -192,7 +196,8 @@ class CurriculumEnv(GymParkingEnv):
         if curriculum_manager is not None and phase_name is not None:
             # Load base config if not provided
             if config is None:
-                with open("config_env.yaml", "r") as f:
+                base_config_path = curriculum_manager.base_config_path
+                with open(base_config_path, "r") as f:
                     config = yaml.safe_load(f)
 
             # Merge with phase-specific config
@@ -213,8 +218,9 @@ class CurriculumEnv(GymParkingEnv):
 
         self.phase_name = phase_name
 
-        # Reload config
-        with open("config_env.yaml", "r") as f:
+        # Reload config from the curriculum's base config path
+        base_config_path = self.curriculum_manager.base_config_path
+        with open(base_config_path, "r") as f:
             base_config = yaml.safe_load(f)
 
         merged_config = self.curriculum_manager.get_phase_env_config(phase_name, base_config)
@@ -249,8 +255,9 @@ def make_curriculum_env(
     if phase_name is None:
         phase_name = curriculum_manager.phase_order[0]
 
-    # Load base config
-    with open("config_env.yaml", "r") as f:
+    # Load base config from the curriculum's specified config file
+    base_config_path = curriculum_manager.base_config_path
+    with open(base_config_path, "r") as f:
         base_config = yaml.safe_load(f)
 
     return CurriculumEnv(
