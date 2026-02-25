@@ -415,34 +415,42 @@ class ActionConverter:
         self.v_model += accel_cmd * self.dt
         self.v_model = float(np.clip(self.v_model, -self.max_vel, self.max_vel))
 
-        # --- Velocity integrator ---
-        # Closed-loop: v_target = v_current + accel * dt
-        # This matches training for braking (car stops in 4 steps, not 7).
-        # But at standstill, accel*dt = ±0.05 is too small to overcome
-        # static friction. We apply a smooth friction compensation below.
+        # Drift cap: prevent v_model from diverging too far from hardware velocity.
+        # Normal transient gap during approach: 0.08–0.18 m/s (car lags commands).
+        # Stuck-car scenario (car against wall, friction): gap grows to 0.47–0.50 m/s.
+        # At that point policy observes v_model=0.5 while car isn't moving → bad decisions.
+        # Cap at 0.35 m/s: handles normal transients, prevents stuck-car divergence.
+        MAX_V_DRIFT = 0.35
+        self.v_model = float(np.clip(
+            self.v_model, v_current - MAX_V_DRIFT, v_current + MAX_V_DRIFT
+        ))
+
+        # --- Velocity command: use v_model (open-loop, matches training) ---
+        #
+        # ROOT BUG with old closed-loop approach (v_target = v_current + accel*dt):
+        #   When friction keeps the car nearly stationary (v_hw ≈ 0), v_target
+        #   stays near 0 each step regardless of what the policy commands.
+        #   Example: v_current=0.03, accel=-0.20 → v_target=0.03-0.02=+0.01 m/s
+        #   ros_bridge sees vel_cmd=0.007 → abs < 0.01 → STOP → braking torque
+        #   → car barely moves → v_hw stays near 0 → loop repeats forever.
+        #
+        # FIX: use v_model (same open-loop integrator training uses):
+        #   v_model accumulates: -0.02, -0.04, ..., -0.40, -0.50 m/s
+        #   ros_bridge receives a meaningful reverse target → applies full torque
+        #   → car actually moves → matches training dynamics.
+        #
+        # Keep v_target for diagnostics only (still logged as v_target).
         self.v_target = v_current + accel_cmd * self.dt
         self.v_target = float(np.clip(self.v_target, -self.max_vel, self.max_vel))
 
-        # --- Smooth friction compensation ---
-        # Problem: from standstill, policy commands accel=0.04 → v_target=0.004.
-        # This produces ~zero torque, car stays stuck, policy keeps commanding,
-        # v_model diverges from v_current.
-        #
-        # Solution: if near standstill AND policy wants movement, ensure a
-        # minimum velocity command that generates enough torque to start.
-        # Use accel_cmd sign (not v_target sign) to determine direction.
-        # This avoids the zero-crossing problem during direction changes:
-        # if transitioning reverse→forward, accel_cmd is positive (policy
-        # wants forward), so we correctly boost forward even if v_target
-        # is still slightly negative from v_current residual.
-        MIN_CMD = 0.05  # Minimum velocity to overcome static friction
-        STANDSTILL_THRESH = 0.02  # Car is "at standstill"
+        MIN_CMD = 0.05  # Safety net: minimum command when policy wants movement
 
-        vel_cmd = self.v_target
+        vel_cmd = self.v_model
 
-        if abs(v_current) < STANDSTILL_THRESH and abs(accel_cmd) > 0.01:
-            if abs(vel_cmd) < MIN_CMD:
-                vel_cmd = np.sign(accel_cmd) * MIN_CMD
+        # Apply MIN_CMD whenever policy wants to move but command is too tiny
+        # (handles very early steps before v_model has built up)
+        if 0.0 < abs(vel_cmd) < MIN_CMD:
+            vel_cmd = np.sign(vel_cmd) * MIN_CMD
 
         # Safety clamps
         steer_cmd = np.clip(steer_cmd, -self.safe_max_steer, self.safe_max_steer)
@@ -606,7 +614,7 @@ def run_live(policy, obs_builder: ObservationBuilder,
     obs = None
     v = 0.0
     v_filtered = 0.0
-    v_alpha = 0.4  # Low-pass filter for MoCap-derived velocity
+    v_alpha = 0.5  # Low-pass filter for MoCap-derived velocity (0.4 → 0.5: less lag)
     prev_x = None
     prev_y = None
     prev_time = None
@@ -793,7 +801,18 @@ def run_live(policy, obs_builder: ObservationBuilder,
             prev_time = now
             v = float(np.clip(v_filtered, -max_vel, max_vel))
 
-            # Build observation
+            # Build observation — use v_hw (MoCap velocity), NOT v_model.
+            # v_hw and position (both from MoCap) are self-consistent: if the car
+            # moved slowly, v_hw is small AND along barely changed. The policy sees
+            # "I'm slow and far from bay → keep reversing harder" → sustained reverse.
+            #
+            # v_model creates an internal inconsistency: policy thinks it's going
+            # -0.37 m/s (v_model) but MoCap position barely changed (car lagged due
+            # to friction). Policy then "corrects" this by alternating accel sign
+            # (braking then reversing), which produces the forward/backward oscillation.
+            #
+            # Note: vel_cmd still uses v_model (Fix 1) to give ros_bridge a real
+            # reverse target even when v_hw ≈ 0 due to friction at standstill.
             obs = obs_builder.build_obs(x, y, yaw, v)
 
             # Guard against NaN in observation (can happen from edge cases)
@@ -866,10 +885,16 @@ def run_live(policy, obs_builder: ObservationBuilder,
                     if not ghost:
                         car.send_command(0.0, 0.0)
                     break
+                # Near-bay collision: car was essentially trying to park but clipped a
+                # neighbor. Only nudge back briefly — don't undo all approach progress.
+                # Normal collision (far from bay): full reversal to clear the obstacle.
+                near_bay = abs(obs[0]) < 0.12 and abs(obs[2]) < np.radians(30)
+                steps_to_reverse = 5 if near_bay else COLLISION_REVERSE_STEPS
                 print(f"[rl_parking_node] COLLISION #{collision_count}: "
                       f"along={obs[0]:.3f} lat={obs[1]:.3f} yaw_err={np.degrees(obs[2]):.1f}deg. "
-                      f"Auto-reversing for {COLLISION_REVERSE_STEPS} steps...")
-                collision_recovery_steps = COLLISION_REVERSE_STEPS
+                      f"Auto-reversing for {steps_to_reverse} steps "
+                      f"({'near-bay short' if near_bay else 'full'} recovery)...")
+                collision_recovery_steps = steps_to_reverse
                 if not ghost:
                     car.send_command(0.0, 0.0)  # Stop first
                 continue
@@ -897,6 +922,17 @@ def run_live(policy, obs_builder: ObservationBuilder,
                     if not ghost:
                         car.send_command(0.0, 0.0)
                     continue
+                # In-tolerance but not yet settled: send stop, skip policy.
+                # Critical: if policy runs here it fires a forward/reverse command
+                # that kicks the car out of the bay and into a collision.
+                if step % 5 == 0:
+                    print(f"[rl_parking_node] Settling {settled}/{settled_required} — "
+                          f"holding stop (along={obs[0]:+.3f} lat={obs[1]:+.3f} "
+                          f"yaw={np.degrees(obs[2]):+.1f}deg v={v:+.3f})")
+                if not ghost:
+                    car.send_command(0.0, 0.0)
+                action_converter.reset()  # Keep v_model=0 while stopped
+                continue
             else:
                 settled = 0
 

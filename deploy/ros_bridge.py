@@ -180,7 +180,13 @@ class ROSUDPBridge:
 
                     cmd_velocity = math.nan   # Bypass PID entirely
                     ff_torque = self.FRICTION_COMP + self.K_P_VEL * vel_error
-                    ff_torque = max(0.0, min(0.15, ff_torque))  # forward: non-negative
+                    if vel_error < -0.10:
+                        # Car going >10 cm/s faster than target (overshoot).
+                        # Apply active braking — without this the car coasts 2-3×
+                        # the commanded speed (observed: target=0.11, v_hw=0.278).
+                        ff_torque = -BRAKE_TORQUE
+                    else:
+                        ff_torque = max(0.0, min(0.15, ff_torque))  # forward: non-negative
 
                     if self.cmd_count % 50 == 1 and abs(vel_error) > 0.05:
                         rospy.loginfo(
@@ -192,14 +198,22 @@ class ROSUDPBridge:
                 else:
                     # ---- REVERSE: P velocity controller ----
                     # Use absolute speeds; braking guard prevents overspeed.
-                    abs_target = min(abs(velocity) * self.VEL_GAIN, 0.25)
+                    # NOTE: no 0.25 m/s cap — training uses max_vel=0.5 m/s and the
+                    # policy sometimes needs the car at 0.35-0.45 m/s in reverse.
+                    # The old 0.25 cap caused premature deceleration: at v_hw=0.255
+                    # speed_error went negative → only friction comp (-0.08) → car
+                    # coasted down to ~0.13 m/s even during commanded reverse.
+                    abs_target = abs(velocity) * self.VEL_GAIN
                     abs_actual = abs(v_est)
                     speed_error = abs_target - abs_actual  # +ve = need more reverse
 
                     cmd_velocity = math.nan   # Bypass PID (forward-only anyway)
 
-                    if v_est < velocity - 0.02:
-                        # Car going FASTER in reverse than requested → BRAKE
+                    if v_est < velocity - 0.15:
+                        # Car going MUCH FASTER in reverse than requested → BRAKE.
+                        # Threshold is 0.15 m/s (not 0.02): policy makes small accel
+                        # adjustments (e.g. v_model -0.37 → -0.30) that should NOT
+                        # trigger active braking. Only brake for real overspeed.
                         ff_torque = BRAKE_TORQUE
                     else:
                         ff_torque = -(self.FRICTION_COMP + self.K_P_VEL * max(0.0, speed_error))
