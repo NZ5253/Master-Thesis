@@ -1,0 +1,58 @@
+# parking_scene.yaml
+# Bay calibrated from MoCap on 2026-02-19 16:04:13
+# Car was placed at bay center and position was averaged over 20 readings.
+#
+# To recalibrate: place car at parking spot, run:
+#   python deploy/rl_parking_node.py --calibrate --checkpoint <any_checkpoint>
+
+bay:
+  center_x: -0.8895
+  center_y: -0.2695
+  yaw: 0.1315
+vehicle:
+  length: 0.13
+  width: 0.065
+  wheelbase: 0.09
+  rear_overhang: 0.02
+  max_steer: 0.35
+  max_vel: 0.5
+  max_acc: 0.5
+obstacles:
+  neighbor:
+    w: 0.13
+    h: 0.065
+    offset: 0.194
+    pos_jitter: 0.0
+    curb_gap: 0.018
+    curb_thickness: 0.014
+  random:
+    num_min: 0
+    num_max: 0
+world:
+  x_min: -1.25
+  x_max: 1.25
+  y_min: -1.25
+  y_max: 1.25
+safety:
+  max_torque: 0.15
+  max_steer: 0.35
+  max_torque_rate: 0.1
+  max_steer_rate: 0.5
+  stale_timeout: 0.3
+success:
+  along_tol: 0.043
+  lateral_tol: 0.043
+  yaw_tol: 0.15
+  v_tol: 0.05
+  settled_steps: 5
+calibration:
+  # Measured with deploy/steer_calibration.py on 2026-02-20.
+  # The car's physical response overshoots commanded values:
+  #   velocity: car goes 1.50x faster than commanded
+  #   steering: car turns 1.38x more than commanded
+  # We divide commands by these gains so the car matches training dynamics.
+  velocity_gain: 1.503   # measured v / commanded v
+  steer_gain: 1.376      # R_expected / R_measured (circle fit)
+torque_mapping:
+  a_torque: 6.44026018
+  b_torque: 0.13732343

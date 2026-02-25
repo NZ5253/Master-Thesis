@@ -1,0 +1,84 @@
+# config_env_chronos.yaml
+# =========================================================
+# Environment Configuration for REAL ChronosCar (1/28 scale)
+# =========================================================
+#
+# Source: chronoscar-main model_params.yaml
+#   - lr: 0.038m, lf: 0.052m -> wheelbase: 0.090m
+#   - mass: 0.181kg
+#   - width: 0.065m (measured: 0.0325m * 2)
+#
+# TWO scale factors (because max_steer differs: 0.35 vs 0.523 rad):
+#   body_scale  = 0.36  (wheelbase ratio 0.09/0.25) -- car/obstacle sizes
+#   maneuver_scale = 0.569 (turning-radius ratio 0.247/0.434) -- spawn/approach distances
+#
+# Original values for reference:
+#   length=0.36, width=0.26, wheelbase=0.25, max_steer=0.523
+#   rear_overhang=0.05, dist_to_center=0.13
+#   R_orig = 0.25/tan(0.523) = 0.434
+#   R_chronos = 0.09/tan(0.35) = 0.247
+# =========================================================
+
+vehicle:
+  length: 0.13                # 0.36 * 0.36
+  width: 0.065                # Measured: 0.0325 * 2
+  wheelbase: 0.090            # EXACT: lr(0.038) + lf(0.052)
+  rear_overhang: 0.02         # (L - wheelbase) / 2 = (0.13-0.09)/2 = 0.02
+                              # -> dist_to_center = 0.13/2 - 0.02 = 0.045
+
+  max_steer: 0.35             # 0.35 rad = 20° (real hardware limit)
+  max_steer_rate: 0.5
+  max_vel: 0.5
+  max_acc: 0.5
+
+dt: 0.1
+max_steps: 300
+
+world:
+  width: 2.5                  # Larger to accommodate maneuver-scaled spawn distances
+  height: 2.5
+
+scenarios:
+  parallel:
+    parking:
+      bay:
+        center_x: 0.0
+        center_x_min: -0.108         # -0.30 * 0.36 (body_scale)
+        center_x_max: 0.108
+        center_y: 0.047              # 0.13 * 0.36 (body_scale)
+        center_y_min: -0.036         # -0.10 * 0.36
+        center_y_max: 0.126          # 0.35 * 0.36
+        yaw: 0.0
+        # Bay geometry for reward in_bay check
+        length: 0.13                 # Same as vehicle length
+        width: 0.20                  # 0.55 * 0.36 (body_scale)
+
+    approach_pose:
+      y_offset_from_bay: 0.472      # 0.83 * 0.569 (maneuver_scale)
+      yaw: 0.0
+      x_offset: 0.569               # 1.0 * 0.569 (maneuver_scale)
+
+    spawn_lane:
+      y_offset_from_bay: 0.472      # 0.83 * 0.569 (maneuver_scale)
+      y_jitter: 0.228               # 0.40 * 0.569 (maneuver_scale)
+      yaw: 0.0
+      yaw_jitter: 0.52              # Unchanged (angle)
+      x_min_offset: 0.341           # 0.60 * 0.569 (maneuver_scale)
+      x_max_offset: 1.024           # 1.80 * 0.569 (maneuver_scale)
+
+    success:
+      v_tol: 0.05
+      yaw_tol: 0.087
+      parallel_along_tol: 0.022     # 0.06 * 0.36 (body_scale)
+      parallel_lateral_tol: 0.022
+
+    obstacles:
+      world: {x_min: -1.25, x_max: 1.25, y_min: -1.25, y_max: 1.25}
+      neighbor:
+        w: 0.13                      # Vehicle length (body_scale)
+        h: 0.065                     # Vehicle width (measured)
+        offset: 0.194                # 0.54 * 0.36 (body_scale)
+        pos_jitter: 0.018            # 0.05 * 0.36 (body_scale)
+        curb_gap: 0.018              # 0.05 * 0.36 (body_scale)
+        curb_thickness: 0.014        # 0.04 * 0.36 (body_scale)
+      random: {num_min: 0, num_max: 0}

@@ -1,0 +1,779 @@
+# Curriculum Learning Configuration for ChronosCar (1/28 scale)
+# PRECISION v4: Two scale factors for correct parking geometry
+#
+# body_scale    = 0.36  (wheelbase ratio 0.09/0.25)
+#   → car/obstacle sizes, bay positions, tolerances
+# maneuver_scale = 0.569 (turning-radius ratio R_chronos/R_orig)
+#   → spawn distances, y_jitter, x offsets
+#   → ensures same Lateral/R and Longitudinal/R ratios as original
+#
+# R_orig   = 0.25/tan(0.523) = 0.434m
+# R_chronos = 0.09/tan(0.35) = 0.247m
+# Angles unchanged, reward weights unchanged
+
+# Base environment config file (ChronosCar dimensions)
+base_config: "config_env_chronos.yaml"
+
+curriculum:
+  # ============================================================
+  # PHASE 1: Foundation - Fixed spawn, fixed bay (EASIEST)
+  # ============================================================
+  phase1_foundation:
+    name: "Phase 1: Foundation - Fixed Everything"
+    description: "Learn basic parking. Start with 4.3cm tolerance."
+
+    timesteps: 150000000
+    success_threshold: 0.95
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x: 0.0
+            center_x_min: 0.0
+            center_x_max: 0.0
+            center_y: 0.047            # 0.13 * 0.36 (body_scale)
+            center_y_min: 0.047
+            center_y_max: 0.047
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472     # 0.83 * 0.569 (maneuver_scale)
+          y_jitter: 0.0
+          yaw: 0.0
+          yaw_jitter: 0.0
+          x_min_offset: 0.683          # 1.20 * 0.569 (maneuver_scale)
+          x_max_offset: 0.683
+
+        obstacles:
+          neighbor:
+            w: 0.13                    # 0.36 * 0.36 (body_scale)
+            h: 0.065                   # Vehicle width (measured)
+            offset: 0.194              # 0.54 * 0.36 (body_scale)
+            pos_jitter: 0.0
+            curb_gap: 0.018            # 0.05 * 0.36 (body_scale)
+            curb_thickness: 0.014      # 0.04 * 0.36 (body_scale)
+          random:
+            num_min: 0
+            num_max: 0
+
+        action_scale:
+          steer: 1.0
+          accel: 1.0
+
+        # Start: 4.3cm tolerance (0.12 * 0.36)
+        success:
+          along_tol: 0.043
+          lateral_tol: 0.043
+          yaw_tol: 0.15               # ~8.5 degrees (unchanged)
+          v_tol: 0.05
+          safe_dist: 0.043             # 0.12 * 0.36
+
+        reward:
+          prox_w: 0.0
+          prox_hard: 0.0
+
+          # PHASE 1: LIGHT smoothness
+          action_smooth_w: 0.003
+          smooth_w_far: 0.002
+          smooth_w_near: 0.005
+
+          # PHASE 1: Light oscillation penalties
+          gear_switch_penalty: 0.1
+          steer_reversal_penalty: 0.1
+
+          # Settling rewards
+          settling_bonus: 0.8
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.3
+
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.09          # 0.25 * 0.36 (body_scale)
+          stall_penalty: -0.15
+
+          k_lat_progress: 12.0
+          lat_w: 0.15
+          in_bay_lat_margin: 0.036     # 0.10 * 0.36 (body_scale)
+          in_bay_along_margin: 0.09    # 0.25 * 0.36 (body_scale)
+          bay_entry_bonus: 10.0
+
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+          k_pot: 2.5
+          k_pos_progress: 1.5
+          k_yaw_progress: 0.20
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+
+  # ============================================================
+  # PHASE 2: Random Spawn - Bay still fixed
+  # ============================================================
+  phase2_random_spawn:
+    name: "Phase 2: Random Spawn Position"
+    description: "Bay fixed, spawn varies. SAME tolerance as Phase 1."
+
+    timesteps: 60000000
+    success_threshold: 0.90
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x: 0.0
+            center_x_min: 0.0
+            center_x_max: 0.0
+            center_y: 0.047
+            center_y_min: 0.047
+            center_y_max: 0.047
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472     # 0.83 * 0.569 (maneuver_scale)
+          y_jitter: 0.142              # 0.25 * 0.569 (maneuver_scale)
+          yaw: 0.0
+          yaw_jitter: 0.30             # Unchanged (angle)
+          x_min_offset: 0.512          # 0.90 * 0.569 (maneuver_scale)
+          x_max_offset: 0.854          # 1.50 * 0.569 (maneuver_scale)
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.0
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # SAME as Phase 1
+        success:
+          along_tol: 0.043
+          lateral_tol: 0.043
+          yaw_tol: 0.15
+          v_tol: 0.05
+          safe_dist: 0.043
+
+        reward:
+          prox_w: 0.0
+          prox_hard: 0.0
+
+          action_smooth_w: 0.004
+          smooth_w_far: 0.003
+          smooth_w_near: 0.006
+          gear_switch_penalty: 0.15
+          steer_reversal_penalty: 0.15
+
+          settling_bonus: 1.0
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.4
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.09
+          stall_penalty: -0.15
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 12.0
+          lat_w: 0.15
+          bay_entry_bonus: 10.0
+          k_pot: 2.5
+          k_pos_progress: 1.5
+          k_yaw_progress: 0.20
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 3: Random Bay X Position
+  # ============================================================
+  phase3_random_bay_x:
+    name: "Phase 3: Random Bay X Position"
+    description: "Bay shifts left/right. Tighten to 3.6cm."
+
+    timesteps: 70000000
+    success_threshold: 0.88
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.072       # -0.20 * 0.36 (body_scale)
+            center_x_max: 0.072
+            center_y: 0.047
+            center_y_min: 0.047
+            center_y_max: 0.047
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472     # 0.83 * 0.569 (maneuver_scale)
+          y_jitter: 0.171              # 0.30 * 0.569 (maneuver_scale)
+          yaw: 0.0
+          yaw_jitter: 0.35
+          x_min_offset: 0.455          # 0.80 * 0.569 (maneuver_scale)
+          x_max_offset: 0.910          # 1.60 * 0.569 (maneuver_scale)
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.0
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # Tighten to 3.6cm (0.10 * 0.36)
+        success:
+          along_tol: 0.036
+          lateral_tol: 0.036
+          yaw_tol: 0.12
+          v_tol: 0.04
+          safe_dist: 0.043
+
+        reward:
+          prox_w: 0.0
+          prox_hard: 0.0
+
+          action_smooth_w: 0.005
+          smooth_w_far: 0.004
+          smooth_w_near: 0.008
+          gear_switch_penalty: 0.2
+          steer_reversal_penalty: 0.2
+
+          settling_bonus: 1.2
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.5
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.072         # 0.20 * 0.36
+          stall_penalty: -0.12
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 13.0
+          lat_w: 0.16
+          bay_entry_bonus: 10.0
+          k_pot: 2.6
+          k_pos_progress: 1.6
+          k_yaw_progress: 0.22
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 4a: Small Bay Y Range (bridge phase)
+  # ============================================================
+  phase4a_random_bay_y_small:
+    name: "Phase 4a: Small Bay Y Variation"
+    description: "Bay Y varies slightly. Tighten to 2.9cm."
+
+    timesteps: 100000000
+    success_threshold: 0.85
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.09        # -0.25 * 0.36 (body_scale)
+            center_x_max: 0.09
+            center_y_min: 0.011        # 0.03 * 0.36
+            center_y_max: 0.083        # 0.23 * 0.36
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472     # 0.83 * 0.569 (maneuver_scale)
+          y_jitter: 0.199              # 0.35 * 0.569 (maneuver_scale)
+          yaw: 0.0
+          yaw_jitter: 0.45
+          x_min_offset: 0.398          # 0.70 * 0.569 (maneuver_scale)
+          x_max_offset: 0.967          # 1.70 * 0.569 (maneuver_scale)
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.0
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # Tighten to 2.9cm (0.08 * 0.36)
+        success:
+          along_tol: 0.029
+          lateral_tol: 0.029
+          yaw_tol: 0.10
+          v_tol: 0.035
+          safe_dist: 0.043
+
+        reward:
+          prox_w: 0.0
+          prox_hard: 0.0
+
+          action_smooth_w: 0.006
+          smooth_w_far: 0.005
+          smooth_w_near: 0.010
+          gear_switch_penalty: 0.3
+          steer_reversal_penalty: 0.3
+
+          settling_bonus: 1.5
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.6
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.054         # 0.15 * 0.36
+          stall_penalty: -0.14
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 14.0
+          lat_w: 0.18
+          bay_entry_bonus: 10.0
+          k_pot: 2.8
+          k_pos_progress: 1.8
+          k_yaw_progress: 0.25
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 4: Full Bay Randomization
+  # ============================================================
+  phase4_random_bay_full:
+    name: "Phase 4: Full Bay Randomization"
+    description: "Full bay randomization. Tighten to 2.5cm."
+
+    timesteps: 150000000
+    success_threshold: 0.82
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.108       # -0.30 * 0.36 (body_scale)
+            center_x_max: 0.108
+            center_y_min: -0.036       # -0.10 * 0.36
+            center_y_max: 0.126        # 0.35 * 0.36
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472     # 0.83 * 0.569 (maneuver_scale)
+          y_jitter: 0.228              # 0.40 * 0.569 (maneuver_scale)
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.341          # 0.60 * 0.569 (maneuver_scale)
+          x_max_offset: 1.024          # 1.80 * 0.569 (maneuver_scale)
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.0
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # Tighten to 2.5cm (0.07 * 0.36)
+        success:
+          along_tol: 0.025
+          lateral_tol: 0.025
+          yaw_tol: 0.09
+          v_tol: 0.03
+          safe_dist: 0.043
+
+        reward:
+          prox_w: 0.5
+          prox_hard: 0.0
+
+          action_smooth_w: 0.008
+          smooth_w_far: 0.006
+          smooth_w_near: 0.012
+          gear_switch_penalty: 0.5
+          steer_reversal_penalty: 0.4
+
+          settling_bonus: 2.0
+          settling_v_threshold: 0.012
+          settling_steer_threshold: 0.06
+          unnecessary_movement_penalty: 0.8
+          early_termination_enabled: true
+          settled_steps_required: 4
+
+          stall_pos_err: 0.043         # 0.12 * 0.36
+          stall_penalty: -0.15
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 15.0
+          lat_w: 0.20
+          bay_entry_bonus: 10.0
+          k_pot: 3.0
+          k_pos_progress: 2.0
+          k_yaw_progress: 0.28
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 5: Neighbor Jitter
+  # ============================================================
+  phase5_neighbor_jitter:
+    name: "Phase 5: Neighbor Position Jitter"
+    description: "Neighbors jitter. Tighten to 2.2cm."
+
+    timesteps: 80000000
+    success_threshold: 0.80
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.108
+            center_x_max: 0.108
+            center_y_min: -0.036
+            center_y_max: 0.126
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472
+          y_jitter: 0.228
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.341
+          x_max_offset: 1.024
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.018          # 0.05 * 0.36 (body_scale)
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # Tighten to 2.2cm (0.06 * 0.36)
+        success:
+          along_tol: 0.022
+          lateral_tol: 0.022
+          yaw_tol: 0.087
+          v_tol: 0.025
+          safe_dist: 0.043
+
+        reward:
+          prox_w: 1.0
+          prox_hard: 2.0
+
+          action_smooth_w: 0.010
+          smooth_w_far: 0.008
+          smooth_w_near: 0.015
+          gear_switch_penalty: 0.8
+          steer_reversal_penalty: 0.6
+
+          settling_bonus: 2.5
+          settling_v_threshold: 0.010
+          settling_steer_threshold: 0.05
+          unnecessary_movement_penalty: 1.0
+          early_termination_enabled: true
+          settled_steps_required: 4
+
+          stall_pos_err: 0.036         # 0.10 * 0.36
+          stall_penalty: -0.16
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 16.0
+          lat_w: 0.22
+          bay_entry_bonus: 10.0
+          k_pot: 3.2
+          k_pos_progress: 2.2
+          k_yaw_progress: 0.32
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 6: Gentle Polish
+  # ============================================================
+  # Same tolerances as Phase 5. Same rewards as Phase 5.
+  # Only tiny tweaks: slightly more settling bonus and
+  # require 5 settled steps (from 4) so the car stops cleaner.
+  phase6_random_obstacles:
+    name: "Phase 6: Gentle Polish"
+    description: "Same tolerances as Phase 5, just settle prettier."
+
+    timesteps: 30000000
+    success_threshold: 0.80
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.108
+            center_x_max: 0.108
+            center_y_min: -0.036
+            center_y_max: 0.126
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472
+          y_jitter: 0.228
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.341
+          x_max_offset: 1.024
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.018
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # SAME tolerances as Phase 5
+        success:
+          along_tol: 0.022
+          lateral_tol: 0.022
+          yaw_tol: 0.087
+          v_tol: 0.025
+          safe_dist: 0.043
+
+        # ALL rewards IDENTICAL to Phase 5 except settling tweaks
+        reward:
+          prox_w: 1.0
+          prox_hard: 2.0
+
+          action_smooth_w: 0.010
+          smooth_w_far: 0.008
+          smooth_w_near: 0.015
+          gear_switch_penalty: 0.8
+          steer_reversal_penalty: 0.6
+
+          settling_bonus: 3.0            # Slightly up from 2.5 (reward clean stops)
+          settling_v_threshold: 0.008    # Slightly tighter (must be more still)
+          settling_steer_threshold: 0.04 # Slightly tighter (wheels straighter)
+          unnecessary_movement_penalty: 1.0
+          early_termination_enabled: true
+          settled_steps_required: 5      # 5 steps (from 4) — hold still longer
+
+          stall_pos_err: 0.036
+          stall_penalty: -0.16
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 16.0
+          lat_w: 0.22
+          bay_entry_bonus: 10.0
+          k_pot: 3.2
+          k_pos_progress: 2.2
+          k_yaw_progress: 0.32
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 7: Final Yaw & Settling Precision
+  # ============================================================
+  # LESSON: NEVER change reward weights between phases.
+  # ALL rewards identical to Phase 6. Position stays at 2.2cm.
+  # Only tighten: yaw (5° → 4°) and velocity (must stop cleaner).
+  phase7_polish:
+    name: "Phase 7: Perfect Yaw & Clean Stop"
+    description: "Same position tol, tighter yaw (4°) and velocity. Settle perfectly."
+
+    timesteps: 50000000
+    success_threshold: 0.75
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.108
+            center_x_max: 0.108
+            center_y_min: -0.036
+            center_y_max: 0.126
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.472
+          y_jitter: 0.228
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.341
+          x_max_offset: 1.024
+
+        obstacles:
+          neighbor:
+            w: 0.13
+            h: 0.065
+            offset: 0.194
+            pos_jitter: 0.018
+            curb_gap: 0.018
+            curb_thickness: 0.014
+          random:
+            num_min: 0
+            num_max: 0
+
+        # Position SAME as Phase 5/6 (2.2cm)
+        # Only yaw tightened: 5° → 4°, velocity tightened
+        success:
+          along_tol: 0.022             # SAME as Phase 5/6
+          lateral_tol: 0.022           # SAME as Phase 5/6
+          yaw_tol: 0.070               # 4 degrees (from 5°) — align straighter
+          v_tol: 0.020                 # tighter (from 0.025) — must actually stop
+          safe_dist: 0.043
+
+        # ALL rewards IDENTICAL to Phase 6
+        reward:
+          prox_w: 1.0
+          prox_hard: 2.0
+
+          action_smooth_w: 0.010
+          smooth_w_far: 0.008
+          smooth_w_near: 0.015
+          gear_switch_penalty: 0.8
+          steer_reversal_penalty: 0.6
+
+          settling_bonus: 3.0
+          settling_v_threshold: 0.008
+          settling_steer_threshold: 0.04
+          unnecessary_movement_penalty: 1.0
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.036
+          stall_penalty: -0.16
+          in_bay_lat_margin: 0.036
+          in_bay_along_margin: 0.09
+          k_lat_progress: 16.0
+          lat_w: 0.22
+          bay_entry_bonus: 10.0
+          k_pot: 3.2
+          k_pos_progress: 2.2
+          k_yaw_progress: 0.32
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+# ============================================================
+# Training Configuration per Phase (identical to original)
+# ============================================================
+training_config:
+  phase1_foundation:
+    lr: 3e-4
+    entropy_coeff: 0.02
+    train_batch_size: 4000
+    num_sgd_iter: 10
+    eval_interval: 5
+
+  phase2_random_spawn:
+    lr: 3e-4
+    entropy_coeff: 0.018
+    train_batch_size: 4000
+    num_sgd_iter: 10
+    eval_interval: 10
+
+  phase3_random_bay_x:
+    lr: 2e-4
+    entropy_coeff: 0.007
+    train_batch_size: 4000
+    num_sgd_iter: 12
+    eval_interval: 10
+
+  phase4a_random_bay_y_small:
+    lr: 1.5e-4
+    entropy_coeff: 0.005
+    train_batch_size: 6000
+    num_sgd_iter: 12
+    eval_interval: 10
+
+  phase4_random_bay_full:
+    lr: 1.2e-4
+    entropy_coeff: 0.004
+    train_batch_size: 6000
+    num_sgd_iter: 15
+    eval_interval: 10
+
+  phase5_neighbor_jitter:
+    lr: 1e-4
+    entropy_coeff: 0.003
+    train_batch_size: 6000
+    num_sgd_iter: 15
+    eval_interval: 10
+
+  phase6_random_obstacles:
+    lr: 1e-4                           # SAME as Phase 5 (don't change anything)
+    entropy_coeff: 0.003               # SAME as Phase 5
+    train_batch_size: 6000             # SAME as Phase 5
+    num_sgd_iter: 15                   # SAME as Phase 5
+    eval_interval: 10
+
+  phase7_polish:
+    lr: 1e-4                           # SAME as Phase 5/6 (don't change anything)
+    entropy_coeff: 0.003               # SAME as Phase 5/6
+    train_batch_size: 6000             # SAME as Phase 5/6
+    num_sgd_iter: 15                   # SAME as Phase 5/6
+    eval_interval: 10
+
+# ============================================================
+# Curriculum Progression Settings (identical to original)
+# ============================================================
+progression:
+  evaluation_episodes: 100
+  consecutive_successes: 3
+
+  save_phase_checkpoints: true
+  keep_best_only: true
+
+  max_timesteps_per_phase: null
+  patience: 999
+
+  warm_start: true
+  reset_optimizer: false

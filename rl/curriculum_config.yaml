@@ -1,5 +1,6 @@
 # Curriculum Learning Configuration for Parallel Parking RL
-# Progressive difficulty matching MPC Phase structure
+# PRECISION v3: Tight tolerances from start, penalties for oscillation near goal
+# Target: <5cm precision, deliberate movements (steer-stop-adjust-park)
 
 curriculum:
   # ============================================================
@@ -7,89 +8,91 @@ curriculum:
   # ============================================================
   phase1_foundation:
     name: "Phase 1: Foundation - Fixed Everything"
-    description: "Learn basic parking with no randomization. Car always spawns at same position, bay is fixed."
+    description: "Learn basic parking. Start with 12cm tolerance."
 
-    timesteps: 150000000  # 15M steps
-    success_threshold: 0.85  # 85% success rate to advance
+    timesteps: 150000000
+    success_threshold: 0.95
 
     env_config:
       parallel:
         parking:
           bay:
             center_x: 0.0
-            center_x_min: 0.0      # IMPORTANT: lock randomization keys
+            center_x_min: 0.0
             center_x_max: 0.0
             center_y: 0.13
             center_y_min: 0.13
             center_y_max: 0.13
-            yaw: 0.0               # Fixed yaw
-            # NO randomization ranges
+            yaw: 0.0
 
         spawn_lane:
-          # Fixed spawn position (no randomization)
           y_offset_from_bay: 0.83
-          y_jitter: 0.0            # No jitter
+          y_jitter: 0.0
           yaw: 0.0
-          yaw_jitter: 0.0          # No jitter
-          x_min_offset: 1.20       # Fixed distance
-          x_max_offset: 1.20       # Same as min = no randomization
+          yaw_jitter: 0.0
+          x_min_offset: 1.20
+          x_max_offset: 1.20
 
         obstacles:
           neighbor:
             w: 0.36
             h: 0.26
             offset: 0.54
-            pos_jitter: 0.0        # Fixed neighbors
+            pos_jitter: 0.0
           random:
             num_min: 0
-            num_max: 0             # No random obstacles
-        
-        # Allow full steering range so learning the correct arc is possible
+            num_max: 0
+
         action_scale:
           steer: 1.0
           accel: 1.0
 
-        # --- PHASE 1 SPECIFIC FIXES ---
+        # Start tight: 12cm tolerance
         success:
-          # Make Phase 1 learnable; tighten later phases
-          along_tol: 0.20
-          lateral_tol: 0.20
-          yaw_tol: 0.20
-          v_tol: 0.20
-          # Reward-only proximity gate: MUST be below natural slot clearance (~0.18m)
+          along_tol: 0.12
+          lateral_tol: 0.12
+          yaw_tol: 0.15            # ~8.5 degrees
+          v_tol: 0.10
           safe_dist: 0.12
 
         reward:
-          # Stop fighting the correct solution in Phase 1
           prox_w: 0.0
           prox_hard: 0.0
 
-          # Avoid over-penalizing fine corrections early (Gym wrapper handles this if needed)
-          action_smooth_w: 0.0
-          smooth_w_far: 0.0
-          smooth_w_near: 0.0
+          # PHASE 1: LIGHT smoothness - prevents wiggle strategy from forming!
+          action_smooth_w: 0.003        # Light but present from start
+          smooth_w_far: 0.002           # Light smoothness everywhere
+          smooth_w_near: 0.005          # Slightly more when close
 
-          # Remove near-goal freeze (force movement closer to goal)
-          stall_pos_err: 0.35
-          stall_penalty: -0.08  # punish stopping while far
+          # PHASE 1: Light oscillation penalties - teach good habits early
+          gear_switch_penalty: 0.1      # Light penalty for back-and-forth
+          steer_reversal_penalty: 0.1   # Light penalty for left-right wiggle
 
-          # Stronger lateral shaping
-          k_lat_progress: 10.0
-          lat_w: 0.12
-          
-          # Tighter margin for entry bonus
-          in_bay_lat_margin: 0.12
-          bay_entry_bonus: 8.0
+          # NEW: Settling rewards - encourage stopping when close
+          settling_bonus: 0.8           # Reward for being still near goal
+          settling_v_threshold: 0.015   # Velocity threshold for "still"
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.3  # Penalize moving when in tolerance
 
-          # Downscale terminal rewards to match PPO value clipping (vf_clip_param=10.0)
+          # NEW: Early termination when settled
+          early_termination_enabled: true
+          settled_steps_required: 5     # Must be still for 5 steps
+
+          stall_pos_err: 0.25
+          stall_penalty: -0.15   # Stronger - force movement
+
+          k_lat_progress: 12.0
+          lat_w: 0.15
+          in_bay_lat_margin: 0.10
+          bay_entry_bonus: 10.0
+
           success_reward: 200.0
           collision_penalty: -200.0
           timeout_penalty: -400.0
 
-          # Shaping coefficients
-          k_pot: 2.0
-          k_pos_progress: 1.2
-          k_yaw_progress: 0.15
+          k_pot: 2.5
+          k_pos_progress: 1.5
+          k_yaw_progress: 0.20
           distance_w: 0.05
           time_penalty: -0.008
           stall_speed: 0.02
@@ -99,17 +102,17 @@ curriculum:
   # ============================================================
   phase2_random_spawn:
     name: "Phase 2: Random Spawn Position"
-    description: "Bay is fixed, but spawn position varies (x, y, yaw). Learn to approach from different angles."
+    description: "Bay fixed, spawn varies. SAME tolerance as Phase 1 - only add spawn randomization."
 
-    timesteps: 40000000  # 40M steps
-    success_threshold: 0.80  # 85% success (harder due to randomization)
+    timesteps: 60000000
+    success_threshold: 0.90  # Lower threshold - spawn randomization is hard
 
     env_config:
       parallel:
         parking:
           bay:
             center_x: 0.0
-            center_x_min: 0.0      # IMPORTANT: lock randomization keys
+            center_x_min: 0.0
             center_x_max: 0.0
             center_y: 0.13
             center_y_min: 0.13
@@ -118,10 +121,81 @@ curriculum:
 
         spawn_lane:
           y_offset_from_bay: 0.83
-          y_jitter: 0.30           # ±30cm lateral (start conservative)
+          y_jitter: 0.25           # Reduced from 0.30 - start easier
           yaw: 0.0
-          yaw_jitter: 0.35         # ±20° yaw (0.35 rad)
-          x_min_offset: 0.80       # Wider range
+          yaw_jitter: 0.30         # Reduced from 0.35 - start easier
+          x_min_offset: 0.90       # Narrower range
+          x_max_offset: 1.50
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.0
+          random:
+            num_min: 0
+            num_max: 0
+
+        # SAME as Phase 1 - don't tighten yet, just add spawn randomization
+        success:
+          along_tol: 0.12          # Same as Phase 1
+          lateral_tol: 0.12        # Same as Phase 1
+          yaw_tol: 0.15            # Same as Phase 1
+          v_tol: 0.10              # Same as Phase 1
+          safe_dist: 0.12
+
+        reward:
+          # PHASE 2: Continue light smoothness/settling from Phase 1
+          action_smooth_w: 0.004
+          smooth_w_far: 0.003
+          smooth_w_near: 0.006
+          gear_switch_penalty: 0.15
+          steer_reversal_penalty: 0.15
+
+          # Settling rewards
+          settling_bonus: 1.0
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.4
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.25
+          stall_penalty: -0.15
+          k_lat_progress: 12.0
+          lat_w: 0.15
+          k_pot: 2.5
+          k_pos_progress: 1.5
+          k_yaw_progress: 0.20
+
+  # ============================================================
+  # PHASE 3: Random Bay X Position
+  # ============================================================
+  phase3_random_bay_x:
+    name: "Phase 3: Random Bay X Position"
+    description: "Bay shifts left/right. Tighten tolerance to 10cm."
+
+    timesteps: 70000000
+    success_threshold: 0.88
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.20     # Start smaller
+            center_x_max: 0.20
+            center_y: 0.13
+            center_y_min: 0.13
+            center_y_max: 0.13
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.30           # Keep moderate
+          yaw: 0.0
+          yaw_jitter: 0.35
+          x_min_offset: 0.80
           x_max_offset: 1.60
 
         obstacles:
@@ -129,37 +203,68 @@ curriculum:
             w: 0.36
             h: 0.26
             offset: 0.54
-            pos_jitter: 0.0        # Neighbors still fixed
+            pos_jitter: 0.0
           random:
             num_min: 0
             num_max: 0
 
-  # ============================================================
-  # PHASE 3: Random Bay X Position - Spawn varies
-  # ============================================================
-  phase3_random_bay_x:
-    name: "Phase 3: Random Bay X Position"
-    description: "Bay can shift left/right. Spawn still varies. Goal calculation must adapt."
+        # NOW tighten to 10cm
+        success:
+          along_tol: 0.10
+          lateral_tol: 0.10
+          yaw_tol: 0.12
+          v_tol: 0.08
+          safe_dist: 0.12
 
-    timesteps: 50000000  # 50M steps
-    success_threshold: 0.75  # 80% success
+        reward:
+          # PHASE 3: Continue building good habits
+          action_smooth_w: 0.005
+          smooth_w_far: 0.004
+          smooth_w_near: 0.008
+          gear_switch_penalty: 0.2
+          steer_reversal_penalty: 0.2
+
+          # Settling rewards
+          settling_bonus: 1.2
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.5
+          early_termination_enabled: true
+          settled_steps_required: 5
+
+          stall_pos_err: 0.20
+          stall_penalty: -0.12
+          k_lat_progress: 13.0
+          lat_w: 0.16
+          k_pot: 2.6
+          k_pos_progress: 1.6
+          k_yaw_progress: 0.22
+
+  # ============================================================
+  # PHASE 4a: Small Bay Y Range (bridge phase)
+  # ============================================================
+  phase4a_random_bay_y_small:
+    name: "Phase 4a: Small Bay Y Variation"
+    description: "Bay Y varies slightly. Tighten to 8cm."
+
+    timesteps: 100000000
+    success_threshold: 0.85
 
     env_config:
       parallel:
         parking:
           bay:
-            center_x_min: -0.25    # Bay can shift ±25cm
+            center_x_min: -0.25
             center_x_max: 0.25
-            center_y: 0.13         # Y still fixed
-            center_y_min: 0.13     # IMPORTANT: prevent base-config Y randomization
-            center_y_max: 0.13
+            center_y_min: 0.03
+            center_y_max: 0.23
             yaw: 0.0
 
         spawn_lane:
           y_offset_from_bay: 0.83
-          y_jitter: 0.35           # Increase jitter slightly
+          y_jitter: 0.35
           yaw: 0.0
-          yaw_jitter: 0.40         # ±23°
+          yaw_jitter: 0.45
           x_min_offset: 0.70
           x_max_offset: 1.70
 
@@ -173,91 +278,47 @@ curriculum:
             num_min: 0
             num_max: 0
 
-  # ============================================================
-  # PHASE 4a: Small Bay Y Range (bridge phase)
-  # ============================================================
-  phase4a_random_bay_y_small:
-    name: "Phase 4a: Small Bay Y Variation"
-    description: "Bay Y varies ±10cm. Bridge between fixed-Y and full randomization."
+        # Tighten to 8cm
+        success:
+          along_tol: 0.08
+          lateral_tol: 0.08
+          yaw_tol: 0.10
+          v_tol: 0.07
+          safe_dist: 0.12
 
-    timesteps: 200000000  # 200M steps
-    success_threshold: 0.70  # 70% success
+        reward:
+          # PHASE 4a: Stronger smoothness and oscillation penalties
+          action_smooth_w: 0.006
+          smooth_w_far: 0.005
+          smooth_w_near: 0.010
+          gear_switch_penalty: 0.3
+          steer_reversal_penalty: 0.3
 
-    env_config:
-      parallel:
-        parking:
-          bay:
-            center_x_min: -0.30
-            center_x_max: 0.30
-            center_y_min: 0.03     # Small Y range (±10cm from 0.13)
-            center_y_max: 0.23
-            yaw: 0.0
+          # Settling rewards - stronger now
+          settling_bonus: 1.5
+          settling_v_threshold: 0.015
+          settling_steer_threshold: 0.08
+          unnecessary_movement_penalty: 0.6
+          early_termination_enabled: true
+          settled_steps_required: 5
 
-        spawn_lane:
-          y_offset_from_bay: 0.83
-          y_jitter: 0.40
-          yaw: 0.0
-          yaw_jitter: 0.52         # ±30°
-          x_min_offset: 0.60
-          x_max_offset: 1.80
-
-        obstacles:
-          neighbor:
-            w: 0.36
-            h: 0.26
-            offset: 0.54
-            pos_jitter: 0.0
-          random:
-            num_min: 0
-            num_max: 0
+          stall_pos_err: 0.15
+          stall_penalty: -0.14
+          k_lat_progress: 14.0
+          lat_w: 0.18
+          k_pot: 2.8
+          k_pos_progress: 1.8
+          k_yaw_progress: 0.25
 
   # ============================================================
-  # PHASE 4: Random Bay Y Position - Full bay randomization
+  # PHASE 4: Full Bay Randomization
   # ============================================================
   phase4_random_bay_full:
     name: "Phase 4: Full Bay Randomization"
-    description: "Bay can be anywhere (X and Y). Spawn varies widely. Must generalize to any bay position."
+    description: "Full bay randomization. Tighten to 7cm."
 
-    timesteps: 550000000  # 550M steps
-    success_threshold: 0.70  # 70% success
-
-    env_config:
-      parallel:
-        parking:
-          bay:
-            center_x_min: -0.30
-            center_x_max: 0.30
-            center_y_min: -0.10    # Bay Y can vary
-            center_y_max: 0.35
-            yaw: 0.0
-
-        spawn_lane:
-          y_offset_from_bay: 0.83
-          y_jitter: 0.40           # Full jitter
-          yaw: 0.0
-          yaw_jitter: 0.52         # ±30° full range
-          x_min_offset: 0.60
-          x_max_offset: 1.80
-
-        obstacles:
-          neighbor:
-            w: 0.36
-            h: 0.26
-            offset: 0.54
-            pos_jitter: 0.0        # Still no neighbor jitter
-          random:
-            num_min: 0
-            num_max: 0
-
-  # ============================================================
-  # PHASE 5: Neighbor Jitter - Add neighbor randomization
-  # ============================================================
-  phase5_neighbor_jitter:
-    name: "Phase 5: Neighbor Position Jitter"
-    description: "Neighbors have random ±5cm jitter. Must handle tight/wide gaps."
-
-    timesteps: 60000000  # 35M steps
-    success_threshold: 0.65  # 70% success
+    timesteps: 150000000
+    success_threshold: 0.82
 
     env_config:
       parallel:
@@ -282,20 +343,52 @@ curriculum:
             w: 0.36
             h: 0.26
             offset: 0.54
-            pos_jitter: 0.05       # ±5cm neighbor jitter
+            pos_jitter: 0.0
           random:
             num_min: 0
             num_max: 0
 
-  # ============================================================
-  # PHASE 6: Random Obstacles - Full challenge (HARDEST)
-  # ============================================================
-  phase6_random_obstacles:
-    name: "Phase 6: Random Obstacles in Environment"
-    description: "Full randomization + random obstacles. Maximum difficulty."
+        # Tighten to 7cm
+        success:
+          along_tol: 0.07
+          lateral_tol: 0.07
+          yaw_tol: 0.09
+          v_tol: 0.06
+          safe_dist: 0.12
 
-    timesteps: 650000000  # 40M steps
-    success_threshold: 0.60  # 65% success (hardest phase)
+        reward:
+          # PHASE 4: Stronger penalties
+          action_smooth_w: 0.008
+          smooth_w_far: 0.006
+          smooth_w_near: 0.012
+          gear_switch_penalty: 0.5
+          steer_reversal_penalty: 0.4
+
+          # Settling rewards
+          settling_bonus: 2.0
+          settling_v_threshold: 0.012
+          settling_steer_threshold: 0.06
+          unnecessary_movement_penalty: 0.8
+          early_termination_enabled: true
+          settled_steps_required: 4
+
+          stall_pos_err: 0.12
+          stall_penalty: -0.15
+          k_lat_progress: 15.0
+          lat_w: 0.20
+          k_pot: 3.0
+          k_pos_progress: 2.0
+          k_yaw_progress: 0.28
+
+  # ============================================================
+  # PHASE 5: Neighbor Jitter
+  # ============================================================
+  phase5_neighbor_jitter:
+    name: "Phase 5: Neighbor Position Jitter"
+    description: "Neighbors jitter. Tighten to 6cm."
+
+    timesteps: 80000000
+    success_threshold: 0.80
 
     env_config:
       parallel:
@@ -323,90 +416,258 @@ curriculum:
             pos_jitter: 0.05
           random:
             num_min: 0
-            num_max: 2             # Up to 2 random obstacles
-            x_range: [-1.5, 1.5]
-            y_range: [-1.5, 1.5]
-            w_range: [0.15, 0.30]
-            h_range: [0.15, 0.30]
-            min_distance_to_goal: 0.50
-            min_distance_to_spawn: 0.40
+            num_max: 0
+
+        # Tighten to 6cm
+        success:
+          along_tol: 0.06
+          lateral_tol: 0.06
+          yaw_tol: 0.087
+          v_tol: 0.05
+          safe_dist: 0.12
+
+        reward:
+          # PHASE 5: Strong penalties for refinement
+          action_smooth_w: 0.010
+          smooth_w_far: 0.008
+          smooth_w_near: 0.015
+          gear_switch_penalty: 0.8
+          steer_reversal_penalty: 0.6
+
+          # Settling rewards - high priority now
+          settling_bonus: 2.5
+          settling_v_threshold: 0.010
+          settling_steer_threshold: 0.05
+          unnecessary_movement_penalty: 1.0
+          early_termination_enabled: true
+          settled_steps_required: 4
+
+          stall_pos_err: 0.10
+          stall_penalty: -0.16
+          k_lat_progress: 16.0
+          lat_w: 0.22
+          k_pot: 3.2
+          k_pos_progress: 2.2
+          k_yaw_progress: 0.32
+
+  # ============================================================
+  # PHASE 6: Precision Depth - 5cm Tolerance
+  # ============================================================
+  phase6_random_obstacles:
+    name: "Phase 6: Precision Depth"
+    description: "Focus on perfect depth and yaw. No random obstacles. TARGET: 5cm tolerance."
+
+    timesteps: 200000000
+    success_threshold: 0.75
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.30
+            center_x_max: 0.30
+            center_y_min: -0.10
+            center_y_max: 0.35
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.40
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.60
+          x_max_offset: 1.80
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.05
+          random:
+            num_min: 0
+            num_max: 0
+
+        # TARGET: 5cm tolerance
+        success:
+          along_tol: 0.05
+          lateral_tol: 0.05
+          yaw_tol: 0.070
+          v_tol: 0.04
+          safe_dist: 0.12
+
+        reward:
+          # PHASE 6: Strong penalties - should reach goal reliably by now
+          action_smooth_w: 0.012
+          smooth_w_far: 0.010
+          smooth_w_near: 0.020
+          gear_switch_penalty: 1.0
+          steer_reversal_penalty: 0.8
+
+          # Settling rewards - critical for precision
+          settling_bonus: 3.0
+          settling_v_threshold: 0.008
+          settling_steer_threshold: 0.04
+          unnecessary_movement_penalty: 1.5
+          early_termination_enabled: true
+          settled_steps_required: 3
+
+          stall_pos_err: 0.08
+          stall_penalty: -0.18
+          k_lat_progress: 18.0
+          lat_w: 0.25
+          k_pot: 3.5
+          k_pos_progress: 2.5
+          k_yaw_progress: 0.38
+          success_reward: 250.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 7: Ultra Precision - 4cm Perfect Parking
+  # ============================================================
+  phase7_polish:
+    name: "Phase 7: Ultra Precision"
+    description: "Perfect depth and yaw. No random obstacles. ULTRA-TIGHT: 4cm, deliberate movements only."
+
+    timesteps: 100000000
+    success_threshold: 0.70
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.30
+            center_x_max: 0.30
+            center_y_min: -0.10
+            center_y_max: 0.35
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.83
+          y_jitter: 0.40
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.60
+          x_max_offset: 1.80
+
+        obstacles:
+          neighbor:
+            w: 0.36
+            h: 0.26
+            offset: 0.54
+            pos_jitter: 0.05
+          random:
+            num_min: 0
+            num_max: 0
+
+        # ULTRA-TIGHT: 4cm tolerance
+        success:
+          along_tol: 0.04
+          lateral_tol: 0.04
+          yaw_tol: 0.052           # 3 degrees
+          v_tol: 0.03
+          safe_dist: 0.12
+
+        reward:
+          # PHASE 7: Maximum penalties for PERFECT parking
+          action_smooth_w: 0.015
+          smooth_w_far: 0.012
+          smooth_w_near: 0.025
+          gear_switch_penalty: 1.5      # Strong - deliberate moves only
+          steer_reversal_penalty: 1.2   # Strong - no wiggling
+
+          # Settling rewards - MAXIMUM for perfect parking
+          settling_bonus: 4.0           # High reward for being still
+          settling_v_threshold: 0.005   # Very still
+          settling_steer_threshold: 0.03
+          unnecessary_movement_penalty: 2.0  # Strong penalty for wiggling
+          early_termination_enabled: true
+          settled_steps_required: 3     # Quick success when settled
+
+          stall_pos_err: 0.06
+          stall_penalty: -0.20
+          k_lat_progress: 20.0
+          lat_w: 0.28
+          k_pot: 4.0
+          k_pos_progress: 3.0
+          k_yaw_progress: 0.45
+          success_reward: 300.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
 
 # ============================================================
 # Training Configuration per Phase
 # ============================================================
 training_config:
-  # Phase 1: Foundation - Higher learning rate, more exploration
   phase1_foundation:
-    lr: 3e-4                    # Higher LR for faster initial learning
-    entropy_coeff: 0.02         # More exploration
+    lr: 3e-4
+    entropy_coeff: 0.02         # Higher for exploration
     train_batch_size: 4000
     num_sgd_iter: 10
-    eval_interval: 5            # Evaluate frequently (should learn fast)
+    eval_interval: 5
 
-  # Phase 2: Random Spawn - Standard settings
   phase2_random_spawn:
-    lr: 3e-4
-    entropy_coeff: 0.015
+    lr: 3e-4                    # Keep higher LR for learning
+    entropy_coeff: 0.018        # Higher for exploration
     train_batch_size: 4000
     num_sgd_iter: 10
     eval_interval: 10
 
-  # Phase 3: Random Bay X - Standard
   phase3_random_bay_x:
-    lr: 3e-4
-    entropy_coeff: 0.01
+    lr: 2e-4
+    entropy_coeff: 0.007
     train_batch_size: 4000
-    num_sgd_iter: 10
+    num_sgd_iter: 12
     eval_interval: 10
 
-  # Phase 4a: Small Bay Y - Bridge phase
   phase4a_random_bay_y_small:
-    lr: 3e-4
-    entropy_coeff: 0.015
+    lr: 1.5e-4
+    entropy_coeff: 0.005
     train_batch_size: 6000
     num_sgd_iter: 12
     eval_interval: 10
 
-  # Phase 4: Random Bay Full - More exploration needed
   phase4_random_bay_full:
-    lr: 3e-4
-    entropy_coeff: 0.015        # Slightly more exploration
-    train_batch_size: 6000      # Larger batch for stability
-    num_sgd_iter: 12
-    eval_interval: 10
-
-  # Phase 5: Neighbor Jitter - Fine-tuning
-  phase5_neighbor_jitter:
-    lr: 2e-4                    # Lower LR for fine-tuning
-    entropy_coeff: 0.01
+    lr: 1.2e-4
+    entropy_coeff: 0.004
     train_batch_size: 6000
-    num_sgd_iter: 12
+    num_sgd_iter: 15
     eval_interval: 10
 
-  # Phase 6: Random Obstacles - Most careful learning
-  phase6_random_obstacles:
-    lr: 2e-4                    # Lower LR
-    entropy_coeff: 0.02         # More exploration for obstacles
-    train_batch_size: 8000      # Larger batch for diversity
-    num_sgd_iter: 15            # More updates per batch
+  phase5_neighbor_jitter:
+    lr: 1e-4
+    entropy_coeff: 0.003
+    train_batch_size: 6000
+    num_sgd_iter: 15
     eval_interval: 10
+
+  phase6_random_obstacles:
+    lr: 8e-5
+    entropy_coeff: 0.002
+    train_batch_size: 8000
+    num_sgd_iter: 18
+    eval_interval: 10
+
+  phase7_polish:
+    lr: 4e-5
+    entropy_coeff: 0.001
+    train_batch_size: 8000
+    num_sgd_iter: 20
+    eval_interval: 5
 
 # ============================================================
 # Curriculum Progression Settings
 # ============================================================
 progression:
-  # How to evaluate if ready to advance to next phase
-  evaluation_episodes: 30       # Evaluate on 30 episodes (less noisy than 10)
-  consecutive_successes: 5     # Must pass threshold 5 times in a row
+  evaluation_episodes: 100
+  consecutive_successes: 3
 
-  # Checkpoint management
-  save_phase_checkpoints: true  # Save checkpoint at end of each phase
-  keep_best_only: false         # Keep all phase checkpoints
+  save_phase_checkpoints: true
+  keep_best_only: true
 
-  # Early stopping
-  max_timesteps_per_phase: null  # No hard limit (use timesteps from phase config)
-  patience: 5                    # If no improvement for 5 evals, advance anyway
+  max_timesteps_per_phase: null
+  patience: 999                   # Never advance early
 
-  # Warm start
-  warm_start: true              # Load previous phase weights when advancing
-  reset_optimizer: false        # Keep optimizer state across phases
+  warm_start: true
+  reset_optimizer: false

@@ -1,0 +1,66 @@
+# parking_scene_newcar.yaml
+# Deployment configuration for NEW car (L=0.15m, W=0.10m, wheelbase=0.113m).
+#
+# KEY ADVANTAGE over ChronosCar: This car has WHEEL ENCODERS.
+# Set velocity_source: "encoder" to use vx_b from the CRS estimator directly.
+# This eliminates MoCap position-derivative latency and noise.
+# If vx_b looks broken (> 1.0 m/s at standstill), it falls back to MoCap.
+#
+# Bay center: PLACEHOLDER - run calibration before first use:
+#   python deploy/rl_parking_node.py --calibrate --scene deploy/parking_scene_newcar.yaml
+#
+# Calibration gains: set to 1.0 until measured with steer_calibration.py.
+
+bay:
+  center_x: 0.0
+  center_y: 0.0
+  yaw: 0.0
+vehicle:
+  length: 0.15
+  width: 0.10
+  wheelbase: 0.113
+  rear_overhang: 0.0185
+  max_steer: 0.314
+  max_vel: 0.5
+  max_acc: 0.5
+obstacles:
+  neighbor:
+    w: 0.15
+    h: 0.10
+    offset: 0.244
+    pos_jitter: 0.0
+    curb_gap: 0.023
+    curb_thickness: 0.018
+  random:
+    num_min: 0
+    num_max: 0
+world:
+  x_min: -1.25
+  x_max: 1.25
+  y_min: -1.25
+  y_max: 1.25
+safety:
+  max_torque: 0.15
+  max_steer: 0.314
+  max_torque_rate: 0.1
+  max_steer_rate: 0.5
+  stale_timeout: 0.3
+success:
+  along_tol: 0.027
+  lateral_tol: 0.027
+  yaw_tol: 0.070
+  v_tol: 0.05
+  settled_steps: 5
+# Velocity source: "encoder" uses vx_b from CRS estimator (wheel encoders).
+# "mocap" computes from MoCap position derivative (needed for ChronosCar).
+# Start with "encoder" -- rl_parking_node.py validates and falls back if broken.
+velocity_source: encoder
+
+calibration:
+  # PLACEHOLDER: measure with deploy/steer_calibration.py before use.
+  # These default to 1.0 (no correction) until calibrated.
+  velocity_gain: 1.0
+  steer_gain: 1.0
+torque_mapping:
+  a_torque: 6.44026018
+  b_torque: 0.13732343
