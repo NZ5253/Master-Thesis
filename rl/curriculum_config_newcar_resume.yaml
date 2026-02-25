@@ -1,25 +1,20 @@
 # curriculum_config_newcar_resume.yaml
 #
-# RESUME CONFIG after Phase 5 failure.
+# RESUME CONFIG: Phase 4 -> Phase 5 (NO jitter).
 #
-# PROBLEM: Phase 5 introduced TWO simultaneous hard changes:
-#   1) Neighbor jitter (pos_jitter 0 -> 0.023)
-#   2) Tighter tolerances (3.2cm -> 2.7cm)
-# Policy collapsed: 234M steps, best reward = 14.5. Never recovered.
+# PREVIOUS FAILURE: Phase 5 tried two simultaneous changes (jitter + tolerance tightening)
+# -> policy collapsed. Phase 4b (jitter-only intermediate) was originally added to fix this.
 #
-# FIX: Add intermediate phase4b:
-#   - SAME tolerances as Phase 4 (3.2cm along/lat, yaw 0.09, v_tol 0.03)
-#   - Add neighbor jitter (pos_jitter=0.023)
-#   - Resume from Phase 4 final_checkpoint (reward ~444, excellent policy)
-# Once policy handles jitter at 3.2cm -> Phase 5 can safely tighten to 2.7cm.
+# UPDATED FIX: Remove neighbor jitter entirely. Phase 5 now only tightens tolerances
+# (one change at a time) which is the safe curriculum principle.
 #
-# Launch:
+# Resume from Phase 4 final_checkpoint (reward ~444):
 #   ./resume_phase5_newcar.sh
 #
 # Or manually:
 #   python -m rl.train_curriculum \
 #     --curriculum-config rl/curriculum_config_newcar_resume.yaml \
-#     --start-phase phase4b_jitter_only \
+#     --start-phase phase5_tight_tol \
 #     --resume-checkpoint checkpoints/newcar/curriculum_20260220_211152/phase4_random_bay_full/final_checkpoint \
 #     --train-until-success \
 #     --num-workers 4 --num-cpus 8 --num-gpus 1 \
@@ -29,97 +24,14 @@ base_config: "config_env_newcar.yaml"
 
 curriculum:
   # ============================================================
-  # PHASE 4b: Neighbor Jitter ONLY (no tolerance change)
+  # PHASE 5: Tighten Tolerance ONLY (one change from Phase 4)
   # ============================================================
   # Start from Phase 4 final_checkpoint (reward ~444, ~90%+ success).
-  # Same 3.2cm tolerance as Phase 4. Just add jitter so policy learns
-  # to handle variable neighbor positions before tolerances tighten.
-  phase4b_jitter_only:
-    name: "Phase 4b: Neighbor Jitter (keep 3.2cm tolerance)"
-    description: "Add jitter to neighbors, KEEP Phase 4 tolerances. No double-change."
-
-    timesteps: 40000000
-    success_threshold: 0.82          # Same as Phase 4
-
-    env_config:
-      parallel:
-        parking:
-          bay:
-            center_x_min: -0.136
-            center_x_max: 0.136
-            center_y_min: -0.045
-            center_y_max: 0.158
-            yaw: 0.0
-
-        spawn_lane:
-          y_offset_from_bay: 0.665
-          y_jitter: 0.320
-          yaw: 0.0
-          yaw_jitter: 0.52
-          x_min_offset: 0.481
-          x_max_offset: 1.442
-
-        obstacles:
-          neighbor:
-            w: 0.15
-            h: 0.10
-            offset: 0.244
-            pos_jitter: 0.023        # NEW: jitter added here
-            curb_gap: 0.023
-            curb_thickness: 0.018
-          random:
-            num_min: 0
-            num_max: 0
-
-        # SAME tolerances as Phase 4 (3.2cm) -- no change yet
-        success:
-          along_tol: 0.032           # 3.2cm (Phase 4 level)
-          lateral_tol: 0.032
-          yaw_tol: 0.09
-          v_tol: 0.03
-          safe_dist: 0.054
-
-        reward:
-          prox_w: 0.5
-          prox_hard: 0.0
-
-          action_smooth_w: 0.008
-          smooth_w_far: 0.006
-          smooth_w_near: 0.012
-          gear_switch_penalty: 0.5
-          steer_reversal_penalty: 0.4
-
-          settling_bonus: 2.0
-          settling_v_threshold: 0.012
-          settling_steer_threshold: 0.06
-          unnecessary_movement_penalty: 0.8
-          early_termination_enabled: true
-          settled_steps_required: 4
-
-          stall_pos_err: 0.054
-          stall_penalty: -0.15
-          in_bay_lat_margin: 0.045
-          in_bay_along_margin: 0.113
-          k_lat_progress: 15.0
-          lat_w: 0.20
-          bay_entry_bonus: 10.0
-          k_pot: 3.0
-          k_pos_progress: 2.0
-          k_yaw_progress: 0.28
-          distance_w: 0.05
-          time_penalty: -0.008
-          stall_speed: 0.02
-          success_reward: 200.0
-          collision_penalty: -200.0
-          timeout_penalty: -400.0
-
-  # ============================================================
-  # PHASE 5: Tighten Tolerance (jitter already learned)
-  # ============================================================
-  # Now it is safe to tighten because jitter is already handled.
-  phase5_neighbor_jitter:
-    name: "Phase 5: Tighten to 2.7cm (jitter already known)"
-    description: "Same jitter as 4b, tighten tolerance to 2.7cm."
+  # Only change: tighten along/lateral from 3.2cm -> 2.7cm.
+  # No jitter. One change at a time.
+  phase5_tight_tol:
+    name: "Phase 5: Tighten to 2.7cm (no jitter)"
+    description: "One change: tighten tolerances 3.2cm->2.7cm. No neighbor jitter."
 
     timesteps: 80000000
     success_threshold: 0.80
@@ -147,14 +59,14 @@ curriculum:
             w: 0.15
             h: 0.10
             offset: 0.244
-            pos_jitter: 0.023        # Same as 4b
+            pos_jitter: 0.0              # No jitter
             curb_gap: 0.023
             curb_thickness: 0.018
           random:
             num_min: 0
             num_max: 0
 
-        # Tighten to 2.7cm (0.06 * 0.452) -- only ONE change from 4b
+        # Only change from Phase 4: tighten to 2.7cm
         success:
           along_tol: 0.027
           lateral_tol: 0.027
@@ -197,7 +109,7 @@ curriculum:
           timeout_penalty: -400.0
 
   # ============================================================
-  # PHASE 6: Gentle Polish (unchanged from original)
+  # PHASE 6: Gentle Polish
   # ============================================================
   phase6_random_obstacles:
     name: "Phase 6: Gentle Polish"
@@ -229,7 +141,7 @@ curriculum:
             w: 0.15
             h: 0.10
             offset: 0.244
-            pos_jitter: 0.023
+            pos_jitter: 0.0
             curb_gap: 0.023
             curb_thickness: 0.018
           random:
@@ -275,7 +187,7 @@ curriculum:
           timeout_penalty: -400.0
 
   # ============================================================
-  # PHASE 7: Final Yaw & Settling Precision (unchanged)
+  # PHASE 7: Final Yaw & Settling Precision
   # ============================================================
   phase7_polish:
     name: "Phase 7: Perfect Yaw & Clean Stop"
@@ -307,7 +219,7 @@ curriculum:
             w: 0.15
             h: 0.10
             offset: 0.244
-            pos_jitter: 0.023
+            pos_jitter: 0.0
             curb_gap: 0.023
             curb_thickness: 0.018
           random:
@@ -356,14 +268,7 @@ curriculum:
 # Training Configuration
 # ============================================================
 training_config:
-  phase4b_jitter_only:
-    lr: 1.2e-4                    # Same as Phase 4 (not too aggressive)
-    entropy_coeff: 0.004          # Same as Phase 4
-    train_batch_size: 6000
-    num_sgd_iter: 15
-    eval_interval: 10
-
-  phase5_neighbor_jitter:
+  phase5_tight_tol:
     lr: 1e-4
     entropy_coeff: 0.003
     train_batch_size: 6000

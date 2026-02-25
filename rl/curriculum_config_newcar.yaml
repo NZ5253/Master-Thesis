@@ -443,11 +443,11 @@ curriculum:
           timeout_penalty: -400.0
 
   # ============================================================
-  # PHASE 5: Neighbor Jitter
+  # PHASE 5: Tighten Tolerance (no jitter)
   # ============================================================
-  phase5_neighbor_jitter:
-    name: "Phase 5: Neighbor Position Jitter"
-    description: "Neighbors jitter. Tighten to 2.7cm."
+  phase5_tight_tol:
+    name: "Phase 5: Tighten to 2.7cm (no jitter)"
+    description: "One change only: tighter tolerances from 3.2cm to 2.7cm. No jitter."
 
     timesteps: 80000000
     success_threshold: 0.80
@@ -475,7 +475,7 @@ curriculum:
             w: 0.15
             h: 0.10
             offset: 0.244
-            pos_jitter: 0.023             # 0.05 * 0.452 (body_scale)
+            pos_jitter: 0.0
             curb_gap: 0.023
             curb_thickness: 0.018
           random:
@@ -558,7 +558,7 @@ curriculum:
             w: 0.15
             h: 0.10
             offset: 0.244
-            pos_jitter: 0.023
+            pos_jitter: 0.0
             curb_gap: 0.023
             curb_thickness: 0.018
           random:
@@ -641,7 +641,7 @@ curriculum:
             w: 0.15
             h: 0.10
             offset: 0.244
-            pos_jitter: 0.023
+            pos_jitter: 0.0
             curb_gap: 0.023
             curb_thickness: 0.018
           random:
@@ -731,7 +731,7 @@ training_config:
     num_sgd_iter: 15
     eval_interval: 10
 
-  phase5_neighbor_jitter:
+  phase5_tight_tol:
     lr: 1e-4
     entropy_coeff: 0.003
     train_batch_size: 6000

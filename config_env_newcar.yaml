@@ -87,7 +87,7 @@ scenarios:
         w: 0.15                       # Vehicle length (body_scale)
         h: 0.10                       # Vehicle width
         offset: 0.244                 # 0.54 * 0.452 (body_scale)
-        pos_jitter: 0.023             # 0.05 * 0.452 (body_scale)
+        pos_jitter: 0.0               # No jitter (fixed neighbor positions)
         curb_gap: 0.023               # 0.05 * 0.452 (body_scale)
         curb_thickness: 0.018         # 0.04 * 0.452 (body_scale)
       random: {num_min: 0, num_max: 0}
