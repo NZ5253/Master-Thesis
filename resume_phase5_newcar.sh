@@ -1,19 +1,14 @@
 #!/bin/bash
 # =========================================================
-# New Car Phase 5 Resume Script
+# New Car: Resume Phase 5 from Phase 4 checkpoint
 # =========================================================
-# Phase 5 training failed: introduced jitter + tighter tolerances
-# simultaneously. Policy collapsed after 234M steps (best reward=14.5).
-#
-# FIX: Insert phase4b (jitter only, same 3.2cm tolerance as phase 4).
-# Resume from Phase 4 final_checkpoint (reward ~444, excellent policy).
-# Once policy handles jitter -> Phase 5 safely tightens to 2.7cm.
+# Resumes training from Phase 4 final_checkpoint (reward ~444)
+# into Phase 5 (tighter tolerances 3.2cm->2.7cm, no jitter).
 #
 # Usage:
-#   ./resume_phase5_newcar.sh
-#
-# To resume phase5 after phase4b is done:
-#   ./resume_phase5_newcar.sh phase5
+#   ./resume_phase5_newcar.sh               # Phase 5 -> 6 -> 7
+#   ./resume_phase5_newcar.sh phase6        # Start from Phase 6
+#   ./resume_phase5_newcar.sh phase7_polish # Start from Phase 7
 # =========================================================
 
 set -e
@@ -29,17 +24,17 @@ CHECKPOINT_BASE="checkpoints/newcar"
 PHASE4_RUN="curriculum_20260220_211152"
 PHASE4_CHECKPOINT="$CHECKPOINT_BASE/$PHASE4_RUN/phase4_random_bay_full/final_checkpoint"
 
-START_PHASE="${1:-phase4b_jitter_only}"
+START_PHASE="${1:-phase5_tight_tol}"
 
 echo "========================================="
-echo "New Car: Resume from Phase 4 -> Phase 4b"
+echo "New Car: Resume from Phase 4 -> $START_PHASE"
 echo "========================================="
 echo ""
 echo "Config:      $CURRICULUM_CONFIG"
 echo "Start phase: $START_PHASE"
 echo ""
 
-if [ "$START_PHASE" = "phase4b_jitter_only" ]; then
+if [ "$START_PHASE" = "phase5_tight_tol" ]; then
     echo "Loading weights from Phase 4 final checkpoint (reward ~444):"
     echo "  $PHASE4_CHECKPOINT"
 
@@ -54,7 +49,6 @@ if [ "$START_PHASE" = "phase4b_jitter_only" ]; then
     fi
     echo ""
 
-    echo "Starting phase4b training..."
     python -m rl.train_curriculum \
         --curriculum-config "$CURRICULUM_CONFIG" \
         --start-phase "$START_PHASE" \
@@ -65,47 +59,41 @@ if [ "$START_PHASE" = "phase4b_jitter_only" ]; then
         --num-gpus 1 \
         --checkpoint-dir "$CHECKPOINT_BASE"
 
-elif [ "$START_PHASE" = "phase5" ] || [ "$START_PHASE" = "phase5_neighbor_jitter" ]; then
-    # Find phase4b best checkpoint to start phase5
-    PHASE4B_CHECKPOINT=""
+else
+    # Phase 6, 7, or any later phase: auto-detect best checkpoint from previous phase
+    echo "Looking for best checkpoint for phase: $START_PHASE"
+    RESUME_CHECKPOINT=""
     for dir in $(ls -dt "$CHECKPOINT_BASE"/curriculum_* 2>/dev/null); do
-        if [ -d "$dir/phase4b_jitter_only/best_checkpoint" ]; then
-            PHASE4B_CHECKPOINT="$dir/phase4b_jitter_only/best_checkpoint"
+        if [ -d "$dir/$START_PHASE/best_checkpoint" ]; then
+            RESUME_CHECKPOINT="$dir/$START_PHASE/best_checkpoint"
             break
         fi
     done
 
-    if [ -z "$PHASE4B_CHECKPOINT" ]; then
-        echo "ERROR: phase4b best checkpoint not found. Run phase4b first."
-        exit 1
+    if [ -z "$RESUME_CHECKPOINT" ]; then
+        # Try finding the previous phase checkpoint to warm-start
+        echo "No $START_PHASE checkpoint found. Starting $START_PHASE without resume."
+        python -m rl.train_curriculum \
+            --curriculum-config "$CURRICULUM_CONFIG" \
+            --start-phase "$START_PHASE" \
+            --train-until-success \
+            --num-workers 4 \
+            --num-cpus 8 \
+            --num-gpus 1 \
+            --checkpoint-dir "$CHECKPOINT_BASE"
+    else
+        echo "Found: $RESUME_CHECKPOINT"
+        echo ""
+        python -m rl.train_curriculum \
+            --curriculum-config "$CURRICULUM_CONFIG" \
+            --resume-from-phase "$START_PHASE" \
+            --resume-checkpoint "$RESUME_CHECKPOINT" \
+            --train-until-success \
+            --num-workers 4 \
+            --num-cpus 8 \
+            --num-gpus 1 \
+            --checkpoint-dir "$CHECKPOINT_BASE"
     fi
-
-    echo "Loading weights from Phase 4b best checkpoint:"
-    echo "  $PHASE4B_CHECKPOINT"
-    echo ""
-
-    echo "Starting phase5 training..."
-    python -m rl.train_curriculum \
-        --curriculum-config "$CURRICULUM_CONFIG" \
-        --start-phase "phase5_neighbor_jitter" \
-        --resume-checkpoint "$PHASE4B_CHECKPOINT" \
-        --train-until-success \
-        --num-workers 4 \
-        --num-cpus 8 \
-        --num-gpus 1 \
-        --checkpoint-dir "$CHECKPOINT_BASE"
-
-else
-    # Generic: start from any phase, auto-detect checkpoint
-    echo "Starting $START_PHASE..."
-    python -m rl.train_curriculum \
-        --curriculum-config "$CURRICULUM_CONFIG" \
-        --start-phase "$START_PHASE" \
-        --train-until-success \
-        --num-workers 4 \
-        --num-cpus 8 \
-        --num-gpus 1 \
-        --checkpoint-dir "$CHECKPOINT_BASE"
 fi
 
 echo ""
