@@ -9,6 +9,7 @@ bay:
   center_x: -0.8834
   center_y: -0.2651
   yaw: 0.155
+  goal_offset_along: -0.020  # shift goal 2cm toward curb: car parks slightly away from opening neighbor
 vehicle:
   length: 0.13
   width: 0.065
