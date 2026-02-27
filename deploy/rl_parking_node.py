@@ -263,22 +263,33 @@ class ObservationBuilder:
         self.bay_x = float(scene_cfg["bay"]["center_x"])
         self.bay_y = float(scene_cfg["bay"]["center_y"])
         self.bay_yaw = float(scene_cfg["bay"]["yaw"])
+
+        # Original bay center — used for obstacle placement and world centering.
+        # Must NOT be shifted by goal_offset_along or obstacle positions corrupt.
         self.bay_center = np.array([self.bay_x, self.bay_y, self.bay_yaw])
+
+        # goal_offset_along: shift the effective goal reference for along/lat
+        # measurement ONLY (positive = toward bay opening = less deep).
+        # This does NOT affect obstacle positions or world centering —
+        # only the (along, lateral) error that the policy observes.
+        offset = float(scene_cfg["bay"].get("goal_offset_along", 0.0))
+        self.bay_goal_x = self.bay_x + offset * np.cos(self.bay_yaw)
+        self.bay_goal_y = self.bay_y + offset * np.sin(self.bay_yaw)
 
         veh = scene_cfg["vehicle"]
         self.L = float(veh["length"])
         self.rear_overhang = float(veh["rear_overhang"])
         self.dist_to_center = self.L / 2.0 - self.rear_overhang
 
-        # Compute rear-axle goal from bay center
-        gx = self.bay_x - self.dist_to_center * np.cos(self.bay_yaw)
-        gy = self.bay_y - self.dist_to_center * np.sin(self.bay_yaw)
+        # Compute rear-axle goal from the GOAL center (shifted if offset != 0)
+        gx = self.bay_goal_x - self.dist_to_center * np.cos(self.bay_yaw)
+        gy = self.bay_goal_y - self.dist_to_center * np.sin(self.bay_yaw)
         self.goal = np.array([gx, gy, self.bay_yaw])
 
         # Build virtual obstacles (same as training)
         obs_cfg = scene_cfg.get("obstacles", {})
 
-        # Re-center world boundaries around the bay.
+        # Re-center world boundaries around the ORIGINAL bay center.
         # Training had the bay near origin and world at ±1.25m (symmetric).
         # Deployment bay can be anywhere in the MoCap frame, so we shift
         # the world walls to keep the same relative geometry.
@@ -297,7 +308,7 @@ class ObservationBuilder:
 
         self.obstacle_mgr = ObstacleManager(
             obs_cfg,
-            goal=self.bay_center,
+            goal=self.bay_center,  # ORIGINAL bay center (obstacles placed correctly)
             vehicle_params=veh,
         )
 
@@ -306,6 +317,9 @@ class ObservationBuilder:
 
         print(f"[ObservationBuilder] Bay center: ({self.bay_x:.3f}, {self.bay_y:.3f}, "
               f"yaw={np.degrees(self.bay_yaw):.1f} deg)")
+        if offset != 0.0:
+            print(f"[ObservationBuilder] Goal offset: {offset:+.3f}m along bay → "
+                  f"goal ref ({self.bay_goal_x:.3f}, {self.bay_goal_y:.3f})")
         print(f"[ObservationBuilder] Goal (rear axle): ({self.goal[0]:.3f}, {self.goal[1]:.3f})")
         print(f"[ObservationBuilder] dist_to_center: {self.dist_to_center:.4f}m")
         print(f"[ObservationBuilder] Virtual obstacles: {len(self.obstacle_mgr.obstacles)}")
@@ -319,8 +333,10 @@ class ObservationBuilder:
         cx = x + self.dist_to_center * np.cos(yaw)
         cy = y + self.dist_to_center * np.sin(yaw)
 
-        # Bay-frame errors
-        bx, by, byaw = self.bay_center
+        # Bay-frame errors — measured relative to goal reference.
+        # bay_goal_x/y may be offset from bay_x/y by goal_offset_along.
+        # Obstacle ray-casting uses original bay_center (not affected here).
+        bx, by, byaw = self.bay_goal_x, self.bay_goal_y, self.bay_yaw
         cos_b = np.cos(byaw)
         sin_b = np.sin(byaw)
         along = float((cx - bx) * cos_b + (cy - by) * sin_b)
@@ -390,13 +406,16 @@ class ActionConverter:
         self.last_vel = 0.0
         self.last_accel_cmd = 0.0  # For logging
 
-    def convert(self, action: np.ndarray, v_current: float) -> tuple:
+    def convert(self, action: np.ndarray, v_current: float,
+                along: float = 1.0) -> tuple:
         """
         Convert policy action to (steer_rad, velocity).
 
         Args:
-            action: [steer, accel] in [-1, 1]
+            action:    [steer, accel] in [-1, 1]
             v_current: current velocity from state estimate
+            along:     bay-frame along error (obs[0]). When negative the car
+                       is inside the bay — we cap speed to prevent curb overshoot.
 
         Returns:
             (steer_rad, velocity) clamped and rate-limited
@@ -424,6 +443,23 @@ class ActionConverter:
         self.v_model = float(np.clip(
             self.v_model, v_current - MAX_V_DRIFT, v_current + MAX_V_DRIFT
         ))
+
+        # Near-bay / in-bay speed cap — symmetric, both directions.
+        # The bay is 0.13m long. Fine corrections (yaw, centering) need slow speed.
+        #
+        # SYMMETRIC cap within ±10cm of goal reference, in BOTH directions:
+        #   Backward cap: prevents curb overshoot when entering at slight angle.
+        #   Forward cap:  prevents right-neighbor overshoot on yaw correction.
+        #   Without forward cap, forward burst at v=0.139 m/s pushed car 5-6cm
+        #   past bay center → dF=0.071m (7cm from opening neighbor). Too close.
+        #
+        # 0.12 m/s: gives 2.8°/step yaw authority at full steer (vs 2.3°/step at 0.10).
+        # 0.10 m/s was too slow — 35° yaw error took 55 oscillation steps to settle.
+        # 0.12 m/s corrects 35° yaw in ~12 steps while keeping along overshoot small
+        # (goal_offset_along=-0.020 absorbs any residual forward bias).
+        IN_BAY_MAX_VEL = 0.12
+        if abs(along) < 0.10:
+            self.v_model = float(np.clip(self.v_model, -IN_BAY_MAX_VEL, IN_BAY_MAX_VEL))
 
         # --- Velocity command: use v_model (open-loop, matches training) ---
         #
@@ -635,9 +671,11 @@ def run_live(policy, obs_builder: ObservationBuilder,
 
     # Collision recovery state
     # In training, collision terminates the episode — the policy NEVER learned
-    # to recover from being inside an obstacle. So we use a hand-coded reverse
-    # maneuver to back the car out, then resume policy control.
+    # to recover from being inside an obstacle. So we use a hand-coded exit
+    # maneuver to back the car out (or drive forward if inside the bay), then
+    # resume policy control.
     collision_recovery_steps = 0   # Countdown: >0 means we're in recovery
+    collision_recovery_vel = -0.12 # Signed recovery velocity (neg=backward, pos=forward)
     COLLISION_REVERSE_STEPS = 15   # 1.5 seconds of reversing at 10Hz
     MAX_COLLISION_RECOVERIES = 5   # Give up after this many collisions
     collision_count = 0
@@ -839,6 +877,17 @@ def run_live(policy, obs_builder: ObservationBuilder,
                 print(f"  Obs: along={obs[0]:.4f} lat={obs[1]:.4f} "
                       f"yaw_err={np.degrees(obs[2]):.1f}deg")
                 print(f"  Dist features: dF={obs[4]:.3f} dL={obs[5]:.3f} dR={obs[6]:.3f}")
+                # Warn if starting position is outside training distribution
+                # Training spawn: lat=[0.246, 0.702]m, along=[0.341, 1.024]m, yaw_err=±30deg
+                if abs(obs[1]) < 0.30:
+                    print(f"  [WARN] lat={obs[1]:.3f}m is small (training min ~0.25m). "
+                          f"S-curve may not complete. Recommended: lat >= 0.35m")
+                if obs[0] < 0.40:
+                    print(f"  [WARN] along={obs[0]:.3f}m is small (training min ~0.34m). "
+                          f"Recommended: along >= 0.50m for clean S-curve")
+                if abs(obs[2]) > np.radians(30):
+                    print(f"  [WARN] yaw_err={np.degrees(obs[2]):.1f}deg (training: ±30deg). "
+                          f"Rotate car to face bay more closely.")
                 print()
 
             # Log periodically (every 5 steps = 0.5s for better visibility)
@@ -856,19 +905,24 @@ def run_live(policy, obs_builder: ObservationBuilder,
             # --- Collision recovery ---
             # In training, collision = episode termination. The policy never
             # learned to handle post-collision states (dF=dL=dR=0 is undefined).
-            # Instead of stopping forever, we use a hand-coded reverse maneuver
-            # to back the car out, then resume policy control.
+            # Instead of stopping forever, we use a hand-coded exit maneuver
+            # to clear the obstacle, then resume policy control.
             if collision_recovery_steps > 0:
-                # We're in recovery: reverse along current heading
                 collision_recovery_steps -= 1
                 if not ghost:
-                    # Reverse slowly with zero steer to back straight out.
-                    # Divide by vel_gain so car actually reverses at 0.12 m/s.
-                    car.send_command(-0.12 / action_converter.vel_gain, 0.0)
+                    # Drive at collision_recovery_vel (signed: negative=backward,
+                    # positive=forward). Divide by vel_gain so the car actually
+                    # moves at the target speed regardless of calibration.
+                    car.send_command(collision_recovery_vel / action_converter.vel_gain, 0.0)
                 if collision_recovery_steps == 0:
                     print(f"[rl_parking_node] Recovery complete. Resuming policy.")
-                    action_converter.reset()  # Reset v_target + v_model
-                    v_filtered = 0.0          # Reset velocity filter
+                    # Sync v_model to current hardware velocity so the policy
+                    # doesn't get a huge v_model/v_hw gap on the first step.
+                    # (reset() sets v_model=0 which causes +0.3 m/s gap when
+                    #  the car is still coasting at -0.13 m/s after recovery.)
+                    action_converter.reset()
+                    action_converter.v_model = v  # sync to current velocity
+                    v_filtered = v                # reset velocity filter to current
                 elif collision_recovery_steps % 5 == 0:
                     print(f"[rl_parking_node] Recovering... {collision_recovery_steps} steps left")
                 # Maintain loop timing
@@ -885,16 +939,33 @@ def run_live(policy, obs_builder: ObservationBuilder,
                     if not ghost:
                         car.send_command(0.0, 0.0)
                     break
-                # Near-bay collision: car was essentially trying to park but clipped a
-                # neighbor. Only nudge back briefly — don't undo all approach progress.
-                # Normal collision (far from bay): full reversal to clear the obstacle.
+                # Determine recovery direction based on where the car is.
+                # Inside the bay (along < 0) + roughly aligned (small yaw_err):
+                #   car is facing the bay OPENING, so FORWARD = exit. Backward = deeper.
+                # Outside the bay or large yaw_err:
+                #   standard BACKWARD recovery to clear neighbors/walls.
                 near_bay = abs(obs[0]) < 0.12 and abs(obs[2]) < np.radians(30)
-                steps_to_reverse = 5 if near_bay else COLLISION_REVERSE_STEPS
+                inside_bay = obs[0] < -0.04 and abs(obs[2]) < np.radians(30)
+                if inside_bay:
+                    # Car is deep in bay facing the opening — drive forward to exit.
+                    rec_vel = +0.12
+                    rec_label = "inside-bay FORWARD exit"
+                    steps_to_recover = 8  # a bit more room to clear
+                elif near_bay:
+                    # Car clipped a neighbor near bay entrance — short backward nudge.
+                    rec_vel = -0.12
+                    rec_label = "near-bay short backward"
+                    steps_to_recover = 5
+                else:
+                    # Normal far collision — full backward reversal.
+                    rec_vel = -0.12
+                    rec_label = "full backward"
+                    steps_to_recover = COLLISION_REVERSE_STEPS
                 print(f"[rl_parking_node] COLLISION #{collision_count}: "
                       f"along={obs[0]:.3f} lat={obs[1]:.3f} yaw_err={np.degrees(obs[2]):.1f}deg. "
-                      f"Auto-reversing for {steps_to_reverse} steps "
-                      f"({'near-bay short' if near_bay else 'full'} recovery)...")
-                collision_recovery_steps = steps_to_reverse
+                      f"Recovery: {steps_to_recover} steps ({rec_label})")
+                collision_recovery_steps = steps_to_recover
+                collision_recovery_vel = rec_vel
                 if not ghost:
                     car.send_command(0.0, 0.0)  # Stop first
                 continue
@@ -941,8 +1012,8 @@ def run_live(policy, obs_builder: ObservationBuilder,
             action_tuple = policy.compute_single_action(obs, explore=False)
             action = action_tuple[0]  # Extract the action array (shape: (2,))
 
-            # Convert to hardware commands
-            steer, vel_cmd = action_converter.convert(action, v)
+            # Convert to hardware commands (pass along so in-bay speed cap applies)
+            steer, vel_cmd = action_converter.convert(action, v, along=float(obs[0]))
 
             # Log action with training-vs-hardware comparison
             raw0 = float(np.asarray(action[0]).item())

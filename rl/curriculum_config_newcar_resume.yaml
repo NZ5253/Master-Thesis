@@ -109,11 +109,21 @@ curriculum:
           timeout_penalty: -400.0
 
   # ============================================================
-  # PHASE 6: Gentle Polish
+  # PHASE 6: Gentle Polish (settling incentive only — no harder thresholds)
   # ============================================================
+  # WHY STUCK: Phase 6 originally tightened settling_v_threshold (0.010->0.008),
+  # settling_steer_threshold (0.05->0.04), AND settled_steps_required (4->5)
+  # simultaneously. Policy that hit 80% in phase 5 dropped below 80% because
+  # episodes that "succeeded" in phase 5 now fail the stricter settling test.
+  # THREE simultaneous changes → regression.
+  #
+  # FIX: One change only. Keep all settling thresholds IDENTICAL to phase 5.
+  # Only increase settling_bonus (2.5->3.0) to incentivize cleaner stopping.
+  # The policy can still earn 80%+ on the exact same criteria it already mastered.
+  # Threshold tightening moved to phase 7 (one per phase).
   phase6_random_obstacles:
-    name: "Phase 6: Gentle Polish"
-    description: "Same tolerances as Phase 5, settle prettier."
+    name: "Phase 6: Gentle Polish (bonus only)"
+    description: "SAME settling thresholds as Phase 5. Only settling_bonus increased."
 
     timesteps: 30000000
     success_threshold: 0.80
@@ -163,12 +173,12 @@ curriculum:
           smooth_w_near: 0.015
           gear_switch_penalty: 0.8
           steer_reversal_penalty: 0.6
-          settling_bonus: 3.0
-          settling_v_threshold: 0.008
-          settling_steer_threshold: 0.04
+          settling_bonus: 3.0             # Only change from Phase 5 (was 2.5)
+          settling_v_threshold: 0.010     # SAME as Phase 5 (not tightened)
+          settling_steer_threshold: 0.05  # SAME as Phase 5 (not tightened)
           unnecessary_movement_penalty: 1.0
           early_termination_enabled: true
-          settled_steps_required: 5
+          settled_steps_required: 4       # SAME as Phase 5 (not increased)
           stall_pos_err: 0.045
           stall_penalty: -0.16
           in_bay_lat_margin: 0.045
@@ -187,11 +197,92 @@ curriculum:
           timeout_penalty: -400.0
 
   # ============================================================
-  # PHASE 7: Final Yaw & Settling Precision
+  # PHASE 7: Tighten Settling Only (one change from Phase 6)
   # ============================================================
+  # One change: tighten settling thresholds.
+  # v_threshold 0.010->0.008, steer_threshold 0.05->0.04, steps 4->5.
+  # Position/yaw tolerances SAME as Phase 5/6.
   phase7_polish:
-    name: "Phase 7: Perfect Yaw & Clean Stop"
-    description: "Same position tol, tighter yaw (4deg) and velocity."
+    name: "Phase 7: Tighter Settling"
+    description: "One change: tighter settling thresholds (v, steer, steps). Same position tol."
+
+    timesteps: 40000000
+    success_threshold: 0.78
+
+    env_config:
+      parallel:
+        parking:
+          bay:
+            center_x_min: -0.136
+            center_x_max: 0.136
+            center_y_min: -0.045
+            center_y_max: 0.158
+            yaw: 0.0
+
+        spawn_lane:
+          y_offset_from_bay: 0.665
+          y_jitter: 0.320
+          yaw: 0.0
+          yaw_jitter: 0.52
+          x_min_offset: 0.481
+          x_max_offset: 1.442
+
+        obstacles:
+          neighbor:
+            w: 0.15
+            h: 0.10
+            offset: 0.244
+            pos_jitter: 0.0
+            curb_gap: 0.023
+            curb_thickness: 0.018
+          random:
+            num_min: 0
+            num_max: 0
+
+        success:
+          along_tol: 0.027          # SAME as Phase 5/6
+          lateral_tol: 0.027        # SAME as Phase 5/6
+          yaw_tol: 0.087            # SAME as Phase 5/6
+          v_tol: 0.025              # SAME as Phase 5/6
+          safe_dist: 0.054
+
+        reward:
+          prox_w: 1.0
+          prox_hard: 2.0
+          action_smooth_w: 0.010
+          smooth_w_far: 0.008
+          smooth_w_near: 0.015
+          gear_switch_penalty: 0.8
+          steer_reversal_penalty: 0.6
+          settling_bonus: 3.0
+          settling_v_threshold: 0.008     # Tighter (was 0.010)
+          settling_steer_threshold: 0.04  # Tighter (was 0.05)
+          unnecessary_movement_penalty: 1.0
+          early_termination_enabled: true
+          settled_steps_required: 5       # One more (was 4)
+          stall_pos_err: 0.045
+          stall_penalty: -0.16
+          in_bay_lat_margin: 0.045
+          in_bay_along_margin: 0.113
+          k_lat_progress: 16.0
+          lat_w: 0.22
+          bay_entry_bonus: 10.0
+          k_pot: 3.2
+          k_pos_progress: 2.2
+          k_yaw_progress: 0.32
+          distance_w: 0.05
+          time_penalty: -0.008
+          stall_speed: 0.02
+          success_reward: 200.0
+          collision_penalty: -200.0
+          timeout_penalty: -400.0
+
+  # ============================================================
+  # PHASE 8: Final Yaw Precision (one change from Phase 7)
+  # ============================================================
+  phase8_yaw_precision:
+    name: "Phase 8: Tighter Yaw (4 deg)"
+    description: "One change: tighten yaw_tol 5deg->4deg and v_tol. Same settling."
 
     timesteps: 50000000
     success_threshold: 0.75
@@ -229,8 +320,8 @@ curriculum:
         success:
           along_tol: 0.027
           lateral_tol: 0.027
-          yaw_tol: 0.070           # 4 degrees (tighter)
-          v_tol: 0.020             # tighter
+          yaw_tol: 0.070            # 4 degrees (tighter from 5deg)
+          v_tol: 0.020              # tighter (from 0.025)
           safe_dist: 0.054
 
         reward:
@@ -283,6 +374,13 @@ training_config:
     eval_interval: 10
 
   phase7_polish:
+    lr: 1e-4
+    entropy_coeff: 0.003
+    train_batch_size: 6000
+    num_sgd_iter: 15
+    eval_interval: 10
+
+  phase8_yaw_precision:
     lr: 1e-4
     entropy_coeff: 0.003
     train_batch_size: 6000

@@ -6,9 +6,11 @@
 # into Phase 5 (tighter tolerances 3.2cm->2.7cm, no jitter).
 #
 # Usage:
-#   ./resume_phase5_newcar.sh               # Phase 5 -> 6 -> 7
-#   ./resume_phase5_newcar.sh phase6        # Start from Phase 6
-#   ./resume_phase5_newcar.sh phase7_polish # Start from Phase 7
+#   ./resume_phase5_newcar.sh                       # Phase 5 -> 6 -> 7 -> 8
+#   ./resume_phase5_newcar.sh phase6_restart        # RESTART phase 6 from phase 5 checkpoint
+#                                                   # (use this when phase 6 got stuck with bad config)
+#   ./resume_phase5_newcar.sh phase6_random_obstacles # Continue phase 6 from its best checkpoint
+#   ./resume_phase5_newcar.sh phase7_polish         # Start from Phase 7
 # =========================================================
 
 set -e
@@ -53,6 +55,38 @@ if [ "$START_PHASE" = "phase5_tight_tol" ]; then
         --curriculum-config "$CURRICULUM_CONFIG" \
         --start-phase "$START_PHASE" \
         --resume-checkpoint "$PHASE4_CHECKPOINT" \
+        --train-until-success \
+        --num-workers 4 \
+        --num-cpus 8 \
+        --num-gpus 1 \
+        --checkpoint-dir "$CHECKPOINT_BASE"
+
+elif [ "$START_PHASE" = "phase6_restart" ]; then
+    # Phase 6 got stuck with wrong settling criteria (3 changes at once).
+    # Config is now fixed (only settling_bonus changed from phase 5).
+    # Restart phase 6 from phase 5's final_checkpoint (NOT phase 6's best,
+    # which has a degraded policy from 80M+ steps failing wrong criteria).
+    PHASE5_RUN="curriculum_20260225_134317"
+    PHASE5_CHECKPOINT="$CHECKPOINT_BASE/$PHASE5_RUN/phase5_tight_tol/final_checkpoint"
+
+    echo "RESTARTING Phase 6 from Phase 5 final checkpoint (policy un-degraded):"
+    echo "  $PHASE5_CHECKPOINT"
+    echo ""
+    echo "Phase 6 config fix: only settling_bonus changed (2.5->3.0)."
+    echo "Settling thresholds are SAME as Phase 5 — should pass quickly."
+    echo ""
+
+    if [ ! -d "$PHASE5_CHECKPOINT" ]; then
+        echo "ERROR: Phase 5 final checkpoint not found at $PHASE5_CHECKPOINT"
+        echo "Available runs:"
+        ls -d $CHECKPOINT_BASE/*/phase5_tight_tol/final_checkpoint 2>/dev/null
+        exit 1
+    fi
+
+    python -m rl.train_curriculum \
+        --curriculum-config "$CURRICULUM_CONFIG" \
+        --start-phase "phase6_random_obstacles" \
+        --resume-checkpoint "$PHASE5_CHECKPOINT" \
         --train-until-success \
         --num-workers 4 \
         --num-cpus 8 \
