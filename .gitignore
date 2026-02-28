@@ -75,5 +75,9 @@ chronoscar-main/
 # Training logs (auto-generated, large)
 log.txt
 
+# Large archives
+write.zip
+*.zip
+
 # Local Claude configuration
 .claude/
