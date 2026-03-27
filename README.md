@@ -6,6 +6,10 @@
 
 ---
 
+<video src="https://github.com/NZ5253/Master-Thesis/releases/download/v1.0-demo/Video.mp4" controls width="100%"></video>
+
+---
+
 ## Project Overview
 
 This project implements autonomous parallel parking on 1/28-scale RC cars using deep reinforcement learning (PPO). The journey went from a **classical MPC baseline** → **RL simulation training** → **full hardware deployment** on the CRS ChronosCar platform, culminating in a car that parks itself reliably in under 50 steps (~5 seconds).
