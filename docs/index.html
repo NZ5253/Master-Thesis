@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autonomous Valet Parking — Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 860px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    h1 {
+      font-size: clamp(1.3rem, 3vw, 1.9rem);
+      font-weight: 600;
+      text-align: center;
+      color: #f0f6fc;
+    }
+
+    .subtitle {
+      font-size: 0.95rem;
+      color: #8b949e;
+      text-align: center;
+    }
+
+    .video-wrapper {
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+      background: #000;
+    }
+
+    video {
+      width: 100%;
+      display: block;
+    }
+
+    .stats {
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #58a6ff;
+    }
+
+    .stat-label {
+      font-size: 0.78rem;
+      color: #8b949e;
+      margin-top: 2px;
+    }
+
+    .footer {
+      font-size: 0.78rem;
+      color: #484f58;
+      text-align: center;
+    }
+
+    .footer a {
+      color: #58a6ff;
+      text-decoration: none;
+    }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <h1>Autonomous Valet Parking — Real Hardware Demo</h1>
+    <p class="subtitle">
+      PPO-based deep reinforcement learning on a 1/28-scale RC car &nbsp;·&nbsp; TU Dortmund
+    </p>
+
+    <div class="video-wrapper">
+      <video
+        src="https://github.com/user-attachments/assets/aa5ad910-626d-499b-9566-a7d80ffa14b2"
+        controls
+        playsinline
+        preload="metadata"
+      ></video>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">+2.7 cm</div>
+        <div class="stat-label">Along error</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">−0.4 cm</div>
+        <div class="stat-label">Lateral error</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">−2.5°</div>
+        <div class="stat-label">Yaw error</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">40 steps</div>
+        <div class="stat-label">~5 seconds</div>
+      </div>
+    </div>
+
+    <p class="footer">
+      Master Thesis · Naeem Zain Uddin · TU Dortmund 2026 &nbsp;·&nbsp;
+      <a href="https://github.com/NZ5253/Master-Thesis">View Code</a>
+    </p>
+
+  </div>
+</body>
+</html>
