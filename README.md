@@ -6,7 +6,7 @@
 
 ---
 
-<video src="https://github.com/NZ5253/Master-Thesis/releases/download/v1.0-demo/Video.mp4" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/aa5ad910-626d-499b-9566-a7d80ffa14b2" controls width="100%"></video>
 
 ---
 
